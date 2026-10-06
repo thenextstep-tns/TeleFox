@@ -30,3 +30,6 @@ telefox_update_qr.png
 
 # Mirrored from the repo root by the syncPython Gradle task
 android/app/src/main/python/
+
+# Personal chat lists live on the device / PC, not in the public repo
+rules.json

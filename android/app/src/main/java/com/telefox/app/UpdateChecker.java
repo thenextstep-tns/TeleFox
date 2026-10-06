@@ -9,8 +9,6 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.Settings;
-import android.text.InputType;
-import android.widget.EditText;
 import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
@@ -28,8 +26,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 
 /**
- * Checks the latest GitHub release and installs its APK.
- * Works with a private repo: the user pastes a read-only token once, it is stored on the device.
+ * Checks the latest GitHub release of the (public) repository and installs its APK.
  */
 final class UpdateChecker {
 
@@ -37,9 +34,7 @@ final class UpdateChecker {
     private static final int CONNECT_TIMEOUT_MS = 10_000;
     private static final int READ_TIMEOUT_MS = 30_000;
     private static final int COPY_BUFFER_BYTES = 64 * 1024;
-    private static final int MAX_REDIRECTS = 5;
     private static final String PREFS = "telefox_prefs";
-    private static final String PREF_TOKEN = "github_token";
     private static final String PREF_LAST_CHECK = "last_update_check";
     private static final String API = "https://api.github.com/repos/";
 
@@ -50,37 +45,21 @@ final class UpdateChecker {
         SharedPreferences prefs = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         long now = System.currentTimeMillis();
         if (now - prefs.getLong(PREF_LAST_CHECK, 0) < CHECK_INTERVAL_MS) return;
-        if (prefs.getString(PREF_TOKEN, "").isEmpty()) return; // nothing to authenticate with yet
         prefs.edit().putLong(PREF_LAST_CHECK, now).apply();
         run(activity, false);
     }
 
     /** Called from the "check for updates" button: always reports the outcome. */
     static void checkNow(Activity activity) {
-        SharedPreferences prefs = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        if (prefs.getString(PREF_TOKEN, "").isEmpty()) {
-            askForToken(activity);
-            return;
-        }
         run(activity, true);
     }
 
     private static void run(Activity activity, boolean manual) {
         String repo = activity.getString(R.string.github_repo);
-        String token = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(PREF_TOKEN, "");
         new Thread(() -> {
             try {
-                HttpURLConnection c = open(API + repo + "/releases/latest", token, "application/vnd.github+json");
-                int code = c.getResponseCode();
-                if (code == 401 || code == 403 || code == 404) {
-                    // Wrong, expired or missing token (GitHub answers 404 for private repos)
-                    activity.runOnUiThread(() -> {
-                        Toast.makeText(activity, R.string.update_bad_token, Toast.LENGTH_LONG).show();
-                        askForToken(activity);
-                    });
-                    return;
-                }
-                if (code != 200) {
+                HttpURLConnection c = open(API + repo + "/releases/latest", "application/vnd.github+json");
+                if (c.getResponseCode() != 200) {
                     if (manual) toast(activity, R.string.update_failed);
                     return;
                 }
@@ -92,8 +71,8 @@ final class UpdateChecker {
                     return;
                 }
                 String notes = release.optString("body", "");
-                String assetUrl = apk.getString("url");
-                activity.runOnUiThread(() -> promptInstall(activity, latest, notes, assetUrl, token));
+                String url = apk.getString("browser_download_url");
+                activity.runOnUiThread(() -> promptInstall(activity, latest, notes, url));
             } catch (Exception e) {
                 if (manual) toast(activity, R.string.update_failed);
             }
@@ -108,13 +87,11 @@ final class UpdateChecker {
         return null;
     }
 
-    private static HttpURLConnection open(String url, String token, String accept) throws Exception {
+    private static HttpURLConnection open(String url, String accept) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setConnectTimeout(CONNECT_TIMEOUT_MS);
         c.setReadTimeout(READ_TIMEOUT_MS);
-        c.setInstanceFollowRedirects(false);
         c.setRequestProperty("Accept", accept);
-        if (token != null && !token.isEmpty()) c.setRequestProperty("Authorization", "Bearer " + token);
         return c;
     }
 
@@ -150,38 +127,17 @@ final class UpdateChecker {
         return out;
     }
 
-    private static void askForToken(Activity activity) {
-        if (activity.isFinishing() || activity.isDestroyed()) return;
-        EditText input = new EditText(activity);
-        input.setHint(R.string.update_token_hint);
-        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        input.setSingleLine(true);
-        new AlertDialog.Builder(activity)
-                .setTitle(R.string.update_token_title)
-                .setMessage(activity.getString(R.string.update_token_message, activity.getString(R.string.github_repo)))
-                .setView(input)
-                .setPositiveButton(R.string.update_token_save, (d, w) -> {
-                    String token = input.getText().toString().trim();
-                    if (token.isEmpty()) return;
-                    activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                            .edit().putString(PREF_TOKEN, token).apply();
-                    run(activity, true);
-                })
-                .setNegativeButton(R.string.update_later, null)
-                .show();
-    }
-
-    private static void promptInstall(Activity activity, String version, String notes, String assetUrl, String token) {
+    private static void promptInstall(Activity activity, String version, String notes, String apkUrl) {
         if (activity.isFinishing() || activity.isDestroyed()) return;
         new AlertDialog.Builder(activity)
                 .setTitle(activity.getString(R.string.update_title, version))
                 .setMessage(notes.isEmpty() ? activity.getString(R.string.update_message) : notes)
-                .setPositiveButton(R.string.update_install, (d, w) -> downloadAndInstall(activity, version, assetUrl, token))
+                .setPositiveButton(R.string.update_install, (d, w) -> downloadAndInstall(activity, version, apkUrl))
                 .setNegativeButton(R.string.update_later, null)
                 .show();
     }
 
-    private static void downloadAndInstall(Activity activity, String version, String assetUrl, String token) {
+    private static void downloadAndInstall(Activity activity, String version, String apkUrl) {
         File dir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
         File apk = new File(dir, "TeleFox-" + version + ".apk");
 
@@ -203,22 +159,8 @@ final class UpdateChecker {
             File part = new File(dir, apk.getName() + ".part");
             try {
                 purgeOldDownloads(dir);
-                String url = assetUrl;
-                boolean authenticated = true;
-                HttpURLConnection c = null;
-                for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
-                    // The signed storage URL GitHub redirects to must not receive our token.
-                    c = open(url, authenticated ? token : null, "application/octet-stream");
-                    int code = c.getResponseCode();
-                    if (code >= 300 && code < 400) {
-                        url = c.getHeaderField("Location");
-                        authenticated = false;
-                        c.disconnect();
-                        continue;
-                    }
-                    if (code != 200) throw new Exception("HTTP " + code);
-                    break;
-                }
+                HttpURLConnection c = open(apkUrl, "application/octet-stream");
+                if (c.getResponseCode() != 200) throw new Exception("HTTP " + c.getResponseCode());
                 try (InputStream in = c.getInputStream(); OutputStream out = new FileOutputStream(part)) {
                     byte[] buf = new byte[COPY_BUFFER_BYTES];
                     int n;
