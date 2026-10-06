@@ -80,7 +80,7 @@ public class MainActivity extends Activity {
         requestPermissions();
         startEngine();
         startServerPolling();
-        UpdateChecker.checkIfDue(this, false);
+        UpdateChecker.checkIfDue(this);
     }
 
     @Override
@@ -350,8 +350,13 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String getVersion() {
+            return BuildConfig.VERSION_NAME;
+        }
+
+        @JavascriptInterface
         public void checkForUpdates() {
-            runOnUiThread(() -> UpdateChecker.checkIfDue(MainActivity.this, true));
+            runOnUiThread(() -> UpdateChecker.checkNow(MainActivity.this));
         }
 
         @JavascriptInterface

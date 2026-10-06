@@ -521,6 +521,14 @@
       .msg-bubble { max-width: 88%; }
     }
     #drawerDbBadge, #drawerServerBadge { display: none; }
+    .project-card { min-width: 0; }
+    .project-card-header { flex-wrap: wrap; gap: 10px; }
+    /* Row actions stay reachable while a wide table scrolls sideways */
+    .data-table td:last-child, .data-table th:last-child { position: sticky; right: 0; background: var(--surface); box-shadow: -8px 0 8px -8px var(--scrim); white-space: nowrap; }
+    /* Flex rows with an input and a button: let the input shrink instead of pushing the button out of frame */
+    input, select, textarea { min-width: 0; max-width: 100%; }
+    .btn, .m3-icon-btn, .tg-send-btn { flex-shrink: 0; }
+    .modal-content, .modal-box, .modal-card, .modal-body { min-width: 0; }
     @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
   </style>
 </head>
@@ -543,6 +551,7 @@
       <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></symbol>
       <symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M4.93 4.93l14.14 14.14"/></symbol>
       <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></symbol>
       <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
     </defs>
   </svg>
@@ -671,6 +680,10 @@
       <a href="http://localhost:5678" target="_blank" class="m3-tonal-btn" style="text-decoration: none;" onclick="closeTopMenu();">
         <svg class="icon"><use href="#i-link"/></svg> n8n
       </a>
+      <button class="m3-tonal-btn" id="updateBtn" style="display: none;"
+              onclick="TeleFoxNative.checkForUpdates(); closeTopMenu();">
+        <svg class="icon"><use href="#i-download"/></svg> Обновления <span id="appVersion" style="color: var(--text-2);"></span>
+      </button>
       <button class="m3-tonal-btn" onclick="refreshCurrentTab(); closeTopMenu();">
         <svg class="icon"><use href="#i-refresh"/></svg> Обновить
       </button>
@@ -1322,6 +1335,11 @@
 
     // ---------------- Тема ----------------
     window.addEventListener('DOMContentLoaded', () => {
+      const u = document.getElementById('updateBtn');
+      if (u && window.TeleFoxNative && TeleFoxNative.checkForUpdates) {
+        u.style.display = '';
+        try { document.getElementById('appVersion').textContent = 'v' + TeleFoxNative.getVersion(); } catch (e) {}
+      }
       const b = document.getElementById('systemSoundBtn');
       if (b && window.TeleFoxNative && TeleFoxNative.openNotificationSettings) b.style.display = '';
     });
@@ -3097,7 +3115,7 @@
                 <span class="badge" style="background: var(--warning-bg); color: var(--warning); font-weight: 700;">${p.chats_count || 0} диалогов</span>
                 <span class="badge ${isAct ? 'badge-success' : 'badge-secondary'}">${isAct ? 'В РАБОТЕ' : escapeHtml(p.status)}</span>
               </div>
-              <div style="display: flex; align-items: center; gap: 6px;">
+              <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
                 <button class="btn btn-primary btn-sm" style="padding: 4px 10px; font-size: 12px;" onclick="openCategoryModal('${p.id}')">Добавить категорию</button>
                 <button class="btn btn-secondary btn-sm" style="padding: 4px 10px; font-size: 12px;" onclick="editProject('${p.id}')">Изменить проект</button>
                 <button class="btn btn-danger btn-sm" style="padding: 4px 8px; font-size: 12px;" onclick="deleteProject('${p.id}')" title="Удалить проект"><svg class="icon"><use href="#i-trash"/></svg></button>
@@ -3899,7 +3917,7 @@
     }
 
     function renderAuthInline(sess, warningMsg) {
-      const listEl = document.getElementById('dialogListContainer');
+      const listEl = document.getElementById('dialogsList');
       if (!listEl) return;
       listEl.innerHTML = `
         <div style="padding: 20px 16px; margin: 12px; background: var(--surface); border: 1px solid var(--tg-border); border-radius: 14px; text-align: left; ">

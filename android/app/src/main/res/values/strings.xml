@@ -18,5 +18,11 @@
     <string name="update_later">Позже</string>
     <string name="update_downloading">Загрузка обновления…</string>
     <string name="update_none">Установлена последняя версия</string>
+    <string name="update_bad_token">GitHub не принял токен</string>
+    <string name="update_token_title">Доступ к обновлениям</string>
+    <string name="update_token_message">Репозиторий %1$s закрытый. Вставьте токен GitHub только для чтения (Fine-grained, доступ Contents: Read-only к этому репозиторию). Он хранится только на телефоне.</string>
+    <string name="update_token_hint">github_pat_…</string>
+    <string name="update_token_save">Сохранить</string>
+    <string name="update_allow_install">Разрешите TeleFox устанавливать приложения и нажмите «Обновить» ещё раз</string>
     <string name="update_failed">Не удалось проверить обновления</string>
 </resources>
