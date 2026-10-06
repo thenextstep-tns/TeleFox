@@ -1344,6 +1344,16 @@
       if (b && window.TeleFoxNative && TeleFoxNative.openNotificationSettings) b.style.display = '';
     });
 
+    // What can silence a notification on this phone (Android app only)
+    function refreshNotifDiagnostics() {
+      const el = document.getElementById('notifDiag');
+      if (!el || !window.TeleFoxNative || !TeleFoxNative.notificationDiagnostics) return;
+      try {
+        el.textContent = TeleFoxNative.notificationDiagnostics();
+        el.style.display = 'block';
+      } catch (e) {}
+    }
+
     function applyTheme(theme) {
       document.documentElement.setAttribute('data-theme', theme);
       try { localStorage.setItem('telefox_theme', theme); } catch (e) {}
@@ -3662,6 +3672,7 @@
       const modal = document.getElementById('notificationSettingsModal');
       if (!modal) return;
       modal.style.display = 'flex';
+      refreshNotifDiagnostics();
 
       try {
         const res = await fetch('/api/notifications/settings');
@@ -3764,11 +3775,15 @@
       if ('Notification' in window && Notification.permission !== 'granted') {
         await Notification.requestPermission();
       }
-      playChimeSound();
-      if ('vibrate' in navigator) navigator.vibrate([200, 100, 200]);
+      // In the Android app the native notification makes the sound; a web chime would hide a real failure
+      if (!window.TeleFoxNative) {
+        playChimeSound();
+        if ('vibrate' in navigator) navigator.vibrate([200, 100, 200]);
+      }
       try {
         await fetch('/api/notifications/test', { method: 'POST' });
         showToast('Тестовое уведомление отправлено!');
+        setTimeout(refreshNotifDiagnostics, 800);
       } catch (e) {
         showToast('Ошибка проверки: ' + e.message);
       }
@@ -4064,6 +4079,8 @@
           </div>
         </div>
       </div>
+
+      <pre id="notifDiag" style="display: none; margin-top: 16px; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); font-family: var(--mono); font-size: 12px; white-space: pre-wrap; color: var(--text-2);"></pre>
 
       <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 22px; gap: 10px; flex-wrap: wrap;">
         <div style="display: flex; gap: 8px; flex-wrap: wrap;">

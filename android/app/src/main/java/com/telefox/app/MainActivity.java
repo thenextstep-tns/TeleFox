@@ -360,6 +360,11 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String notificationDiagnostics() {
+            return Notifier.diagnostics(MainActivity.this);
+        }
+
+        @JavascriptInterface
         public void openNotificationSettings() {
             try {
                 Intent i = new Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
