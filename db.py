@@ -31,12 +31,33 @@ def extract_vin(text: str) -> str:
     match = VIN_REGEX.search(clean_text)
     return match.group(0).upper() if match else ""
 
+# Android has no /etc/resolv.conf, which dnspython needs to resolve mongodb+srv:// (Atlas) records.
+FALLBACK_DNS_SERVERS = ["1.1.1.1", "8.8.8.8"]
+_dns_configured = False
+
+
+def _configure_dns_for_android():
+    global _dns_configured
+    if _dns_configured or os.path.exists("/etc/resolv.conf"):
+        return
+    _dns_configured = True
+    try:
+        import dns.resolver
+        resolver = dns.resolver.Resolver(configure=False)
+        resolver.nameservers = FALLBACK_DNS_SERVERS
+        dns.resolver.default_resolver = resolver
+        logger.info("[MongoDB] /etc/resolv.conf отсутствует, использую DNS %s", FALLBACK_DNS_SERVERS)
+    except Exception as e:
+        logger.warning(f"[MongoDB] Не удалось настроить DNS: {e}")
+
+
 def get_db():
     global _mongo_client, _db
     if AsyncIOMotorClient is None or not MONGODB_URI:
         return None
     if _db is None:
         try:
+            _configure_dns_for_android()
             _mongo_client = AsyncIOMotorClient(MONGODB_URI, serverSelectionTimeoutMS=2500)
             _db = _mongo_client[MONGODB_DB_NAME]
         except Exception as e:
