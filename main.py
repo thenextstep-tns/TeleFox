@@ -17,7 +17,7 @@ from config import (
 from uploader import send_to_n8n
 from rules import apply_business_rules, is_chat_allowed, load_rules, passes_filters
 from db import init_db, save_document, log_event, extract_vin, get_chat_category, CATEGORY_TITLES
-from server import app, ACTIVE_CLIENTS, record_intercepted_doc, broadcast_event
+from server import app, ACTIVE_CLIENTS, record_intercepted_doc, broadcast_event, media_kind, media_label
 from telefox_service import (
     load_notification_settings,
     should_notify_for_message,
@@ -269,8 +269,9 @@ async def run_single_client(account: dict, default_api_id: int, default_api_hash
         if not sender_name:
             sender_name = getattr(event, "chat_title", "") or "Клиент"
 
-        has_media = bool(event.document or event.photo)
-        media_type = "Фото" if event.photo else ("Документ" if event.document else None)
+        kind = media_kind(event.message)
+        has_media = kind is not None
+        media_type = media_label(event.message)
         file_name = getattr(event.file, "name", None) if event.file else None
         vin = extract_vin(event.raw_text or "") or (extract_vin(file_name) if file_name else "")
 
@@ -344,6 +345,7 @@ async def run_single_client(account: dict, default_api_id: int, default_api_hash
             "category_icon": category_icon,
             "has_media": has_media,
             "media_type": media_type,
+            "media_kind": kind,
             "file_name": file_name,
             "vin": vin,
             "date": datetime.now().strftime("%d.%m %H:%M:%S"),
@@ -364,7 +366,7 @@ async def run_single_client(account: dict, default_api_id: int, default_api_hash
                 p_prefix = f"[{project_name}] " if project_name else ""
                 c_suffix = f" ({category_name})" if category_name and category_name != "Без категории" else ""
                 notif_title = f"{p_prefix}{sender_name}{c_suffix}"
-                body_text = event.raw_text or ("Фото" if event.photo else ("Документ" if event.document else "Входящее сообщение"))
+                body_text = event.raw_text or media_label(event.message) or "Входящее сообщение"
                 dispatch_android_notification(notif_title, body_text, str(event.chat_id), notif_settings)
                 # Рассылка в браузер для нативных Web Notifications
                 await broadcast_event("native_notification", {

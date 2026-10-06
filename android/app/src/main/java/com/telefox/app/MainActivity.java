@@ -23,6 +23,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.JavascriptInterface;
+import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
@@ -229,6 +230,8 @@ public class MainActivity extends Activity {
         ws.setAllowContentAccess(false);
         ws.setMediaPlaybackRequiresUserGesture(true);
 
+        // Without a WebChromeClient the page's prompt()/confirm()/alert() are silently dropped
+        webView.setWebChromeClient(new WebChromeClient());
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
@@ -352,6 +355,17 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public String getVersion() {
             return BuildConfig.VERSION_NAME;
+        }
+
+        /** Hands a Telegram link to the official app (calls need Telegram's own VoIP stack). */
+        @JavascriptInterface
+        public void openExternal(String url) {
+            if (url == null || !(url.startsWith("tg://") || url.startsWith("https://t.me/"))) return;
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            } catch (Exception e) {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, R.string.telegram_missing, Toast.LENGTH_LONG).show());
+            }
         }
 
         @JavascriptInterface

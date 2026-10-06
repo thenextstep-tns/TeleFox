@@ -521,6 +521,36 @@
       .msg-bubble { max-width: 88%; }
     }
     #drawerDbBadge, #drawerServerBadge { display: none; }
+
+    /* Bottom sheet (chat actions) */
+    .sheet-backdrop { position: fixed; inset: 0; background: var(--scrim); z-index: 1500; opacity: 0; pointer-events: none; transition: opacity .18s; }
+    .sheet-backdrop.open { opacity: 1; pointer-events: auto; }
+    .sheet {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 1501;
+      max-width: 560px; margin: 0 auto;
+      background: var(--surface); border: 1px solid var(--border); border-bottom: none;
+      border-radius: 16px 16px 0 0; box-shadow: var(--shadow);
+      padding: 8px 16px calc(16px + var(--safe-bottom));
+      max-height: 85vh; max-height: 85dvh; overflow-y: auto;
+      transform: translateY(100%); transition: transform .2s ease;
+    }
+    .sheet.open { transform: translateY(0); }
+    .sheet-handle { width: 36px; height: 4px; border-radius: 2px; background: var(--surface-3); margin: 4px auto 12px; }
+    .sheet-title { font-size: 16px; font-weight: 600; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sheet-section { font-size: 12px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .4px; margin: 14px 0 8px; }
+    .sheet-options { display: flex; flex-wrap: wrap; gap: 8px; }
+    .sheet-opt { padding: 7px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13.5px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+    .sheet-opt.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+    .sheet-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 18px; }
+    .sheet-actions .btn { justify-content: flex-start; padding: 10px 12px; }
+
+    /* Media in messages */
+    .msg-audio { width: 100%; min-width: 230px; max-width: 100%; height: 40px; margin-top: 4px; }
+    .msg-video { max-width: 100%; max-height: 320px; border-radius: 10px; display: block; margin-top: 4px; background: #000; }
+    .msg-video.round { width: 220px; height: 220px; border-radius: 50%; object-fit: cover; }
+    .msg-media-meta { font-size: 11px; color: var(--text-2); margin-top: 2px; }
+    /* Touch devices have no hover: tapping a bubble reveals its actions */
+    .msg-bubble.actions-open .msg-floating-actions { display: flex; }
     .project-card { min-width: 0; }
     .project-card-header { flex-wrap: wrap; gap: 10px; }
     /* Row actions stay reachable while a wide table scrolls sideways */
@@ -595,6 +625,23 @@
       </button>
     </div>
   </header>
+
+  <!-- Chat actions sheet: long-press a chat, or ⋮ in an open chat -->
+  <div id="chatSheetBackdrop" class="sheet-backdrop" onclick="closeChatSheet()"></div>
+  <div id="chatSheet" class="sheet" role="dialog" aria-label="Действия с чатом">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title" id="sheetTitle"></div>
+    <div class="sheet-section">Проект</div>
+    <div class="sheet-options" id="sheetProjects"></div>
+    <div class="sheet-section" id="sheetCatLabel">Категория</div>
+    <div class="sheet-options" id="sheetCategories"></div>
+    <div class="sheet-actions">
+      <button class="btn" onclick="sheetMarkRead()">Прочитано</button>
+      <button class="btn" id="sheetTelegramBtn" onclick="sheetOpenTelegram()">Позвонить / открыть в Telegram</button>
+      <button class="btn" onclick="sheetWhitelist()">В белый список</button>
+      <button class="btn btn-danger" onclick="sheetBlacklist()">Игнорировать</button>
+    </div>
+  </div>
 
   <!-- ВЫПАДАЮЩЕЕ СВЕРХУ МЕНЮ (M3 TOP SHEET / DRAWER) -->
   <div id="topMenuBackdrop" class="m3-backdrop" onclick="closeTopMenu()"></div>
@@ -1572,13 +1619,22 @@
     }
 
     // СТРОГАЯ СОРТИРОВКА ДИАЛОГОВ: 1. Непрочитанные наверх 2. По времени последнего сообщения (DESC)
+    // Like Telegram: pinned chats first, then newest message first
     function sortDialogItems(items) {
       return items.sort((a, b) => {
-        const unreadA = (a.unread_count > 0 && a.category !== 'trash' && a.category_id !== 'trash') ? 1 : 0;
-        const unreadB = (b.unread_count > 0 && b.category !== 'trash' && b.category_id !== 'trash') ? 1 : 0;
-        if (unreadA !== unreadB) return unreadB - unreadA; // Unread chats on top!
-        return (b.date_timestamp || 0) - (a.date_timestamp || 0); // Newest messages first!
+        if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+        return (b.date_timestamp || 0) - (a.date_timestamp || 0);
       });
+    }
+
+    // Order groups (projects, categories) by their most recent chat
+    function byRecency(groups, items, keyOf) {
+      const newest = new Map();
+      items.forEach(d => {
+        const k = keyOf(d);
+        newest.set(k, Math.max(newest.get(k) || 0, d.date_timestamp || 0));
+      });
+      return [...groups].sort((a, b) => (newest.get(b.id) || 0) - (newest.get(a.id) || 0));
     }
 
     function renderSortedAndFilteredDialogs() {
@@ -1637,7 +1693,7 @@
       // СЦЕНАРИЙ 1: Режим "Все переписки" (currentProjectFilter === 'all') без сужающего чипа категории -> Группировка по Проектам и Категориям
       if (currentProjectFilter === 'all' && currentDialogFilter === 'all') {
         let anyRendered = false;
-        projectsList.forEach(p => {
+        byRecency(projectsList, filtered, d => d.project_id).forEach(p => {
           const projChats = filtered.filter(d => d.project_id === p.id);
           if (projChats.length > 0) {
             anyRendered = true;
@@ -1652,7 +1708,7 @@
             const categories = p.categories || [];
             let catContentHtml = '';
 
-            categories.forEach(cat => {
+            byRecency(categories, projChats, d => d.category_id || d.category).forEach(cat => {
               const catItems = sortDialogItems(projChats.filter(d => (d.category_id || d.category) === cat.id));
               if (catItems.length > 0) {
                 const subSecId = 'sub_' + p.id + '_' + cat.id;
@@ -1755,7 +1811,7 @@
         const categories = (activeProj && activeProj.categories) ? activeProj.categories : [];
         let anyRendered = false;
 
-        categories.forEach(cat => {
+        byRecency(categories, filtered, d => d.category_id || d.category).forEach(cat => {
           const items = sortDialogItems(filtered.filter(d => (d.category_id || d.category) === cat.id));
           if (items.length > 0) {
             anyRendered = true;
@@ -1897,6 +1953,7 @@
 
       return `
         <div class="tg-dialog-item ${isActive ? 'active' : ''}" id="dialog-item-${d.id}"
+             oncontextmenu="openChatSheet('${d.id}'); return false;"
              onclick="selectChat('${d.id}', '${escapeAttr(d.title)}', ${Boolean(d.is_forum || d.chat_type === 'forum')}, '${d.chat_type || 'private'}', '${d.category_id || d.category || 'none'}', '${avatarUrl}', '${d.project_id || 'none'}')">
           <div class="tg-dialog-avatar" style="background:${avatarBg};">
             <img src="${avatarUrl}" alt="" loading="lazy"
@@ -2110,49 +2167,104 @@
       });
     }
 
-    async function promptChatProject() {
-      closeChatMenu();
-      if (!activeChatId) return;
-      let promptText = "Выберите проект для этого чата:\n0. Без проекта\n";
-      projectsList.forEach((p, idx) => {
-        promptText += `${idx + 1}. ${p.name}\n`;
-      });
-      promptText += "\nВведите номер (или 0):";
-      const choice = prompt(promptText);
-      if (choice === null) return;
-      const idx = parseInt(choice.trim(), 10);
-      if (isNaN(idx)) return;
-      let newProjId = 'none';
-      if (idx > 0 && idx <= projectsList.length) {
-        newProjId = projectsList[idx - 1].id;
-      }
-      await onChatProjectChanged(newProjId);
+    // ---------------- Меню чата (долгое нажатие / ⋮) ----------------
+    let sheetChatId = null;
+
+    function sheetDialog() {
+      return rawDialogsList.find(d => String(d.id) === String(sheetChatId));
     }
 
-    async function promptChatCategory() {
-      closeChatMenu();
-      if (!activeChatId) return;
-      const proj = projectsList.find(p => p.id === activeChatProjectId);
-      const cats = (proj && proj.categories) ? proj.categories : [];
-      if (cats.length === 0) {
-        showToast("У текущего проекта нет дополнительных категорий");
-        return;
-      }
-      let promptText = `Выберите категорию (${proj.name}):\n0. Без категории\n`;
-      cats.forEach((c, idx) => {
-        promptText += `${idx + 1}. ${c.icon || ''} ${c.name}\n`;
-      });
-      promptText += "\nВведите номер:";
-      const choice = prompt(promptText);
-      if (choice === null) return;
-      const idx = parseInt(choice.trim(), 10);
-      if (isNaN(idx)) return;
-      let newCatId = 'none';
-      if (idx > 0 && idx <= cats.length) {
-        newCatId = cats[idx - 1].id;
-      }
-      await onChatCategoryChanged(newCatId);
+    function openChatSheet(chatId) {
+      sheetChatId = String(chatId);
+      if (!sheetDialog()) return;
+      renderChatSheet();
+      document.getElementById('chatSheetBackdrop').classList.add('open');
+      document.getElementById('chatSheet').classList.add('open');
     }
+
+    function closeChatSheet() {
+      document.getElementById('chatSheetBackdrop').classList.remove('open');
+      document.getElementById('chatSheet').classList.remove('open');
+    }
+
+    function renderChatSheet() {
+      const d = sheetDialog();
+      if (!d) return;
+      const curProj = d.project_id || 'none';
+      const curCat = d.category_id || (d.category !== 'none' ? d.category : null) || 'none';
+      document.getElementById('sheetTitle').textContent = d.title || '';
+
+      const opt = (active, onclick, label) =>
+        `<button class="sheet-opt ${active ? 'active' : ''}" onclick="${onclick}">${label}</button>`;
+
+      document.getElementById('sheetProjects').innerHTML =
+        opt(curProj === 'none', "sheetSetProject('none')", 'Без проекта') +
+        projectsList.map(p => opt(curProj === p.id, `sheetSetProject('${p.id}')`, escapeHtml(p.name))).join('');
+
+      const proj = projectsList.find(p => p.id === curProj);
+      const cats = (proj && proj.categories) ? proj.categories : [];
+      const catBox = document.getElementById('sheetCategories');
+      document.getElementById('sheetCatLabel').style.display = cats.length ? '' : 'none';
+      catBox.style.display = cats.length ? '' : 'none';
+      catBox.innerHTML = cats.length
+        ? opt(curCat === 'none', "sheetSetCategory('none')", 'Без категории') +
+          cats.map(c => opt(curCat === c.id, `sheetSetCategory('${c.id}')`, `${escapeHtml(c.icon || '')} ${escapeHtml(c.name)}`.trim())).join('')
+        : '';
+
+      const canOpen = !!(d.username || d.is_user);
+      document.getElementById('sheetTelegramBtn').style.display = canOpen ? '' : 'none';
+    }
+
+    async function sheetSetProject(projectId) {
+      const d = sheetDialog();
+      if (!d) return;
+      const proj = projectsList.find(p => p.id === projectId);
+      const oldCat = d.category_id || 'none';
+      // Categories belong to a project: keep the old one only if the new project has it
+      const keepCat = proj && (proj.categories || []).some(c => c.id === oldCat) ? oldCat : 'none';
+      await saveChatBinding(d.id, null, projectId, keepCat, d.title);
+      renderChatSheet();
+    }
+
+    async function sheetSetCategory(categoryId) {
+      const d = sheetDialog();
+      if (!d) return;
+      await saveChatBinding(d.id, null, d.project_id || 'none', categoryId, d.title);
+      renderChatSheet();
+    }
+
+    async function sheetMarkRead() {
+      const d = sheetDialog();
+      if (!d) return;
+      try {
+        await fetch('/api/chats/mark_read', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: d.id, session: activeSession })
+        });
+        d.unread_count = 0;
+        renderFolderTabs(); renderSortedAndFilteredDialogs();
+        showToast('Отмечено прочитанным');
+      } catch (e) { showToast('Ошибка'); }
+      closeChatSheet();
+    }
+
+    function sheetWhitelist() { const d = sheetDialog(); if (d) quickAddToWhitelist(d.id, d.title); closeChatSheet(); }
+    function sheetBlacklist() { const d = sheetDialog(); if (d) quickAddToBlacklist(d.id, d.title); closeChatSheet(); }
+
+    // Telegram calls need Telegram's own VoIP stack, so hand the chat over to the official app
+    function sheetOpenTelegram() {
+      const d = sheetDialog();
+      if (!d) return;
+      const url = d.username ? `tg://resolve?domain=${encodeURIComponent(d.username)}` : (d.is_user ? `tg://user?id=${d.id}` : '');
+      if (!url) { showToast('Для этого чата нет ссылки'); return; }
+      closeChatSheet();
+      if (window.TeleFoxNative && TeleFoxNative.openExternal) TeleFoxNative.openExternal(url);
+      else window.open(url, '_blank');
+    }
+
+    // ⋮ menu entries reuse the same sheet
+    async function promptChatProject() { closeChatMenu(); if (activeChatId) openChatSheet(activeChatId); }
+    async function promptChatCategory() { closeChatMenu(); if (activeChatId) openChatSheet(activeChatId); }
 
     function toggle() {
       // Safe no-op
@@ -2267,7 +2379,7 @@
       await onChatCategoryChanged(catValue);
     }
 
-    async function saveChatBinding(chatId, topicId, projectId, categoryId) {
+    async function saveChatBinding(chatId, topicId, projectId, categoryId, title = activeChatTitle) {
       const pVal = (projectId && projectId !== 'none') ? projectId : null;
       const cVal = (categoryId && categoryId !== 'none') ? categoryId : null;
       try {
@@ -2279,7 +2391,7 @@
             topic_id: topicId,
             project_id: pVal,
             category_id: cVal,
-            title: activeChatTitle
+            title: title
           })
         });
         const data = await res.json();
@@ -2587,7 +2699,16 @@
       let mediaHtml = '';
       if (m.has_media) {
         const mediaUrl = m.media_url || `/api/media/${activeSession}/${activeChatId}/${m.id}`;
-        if (m.is_photo || m.media_type === 'Фото') {
+        const kind = m.media_kind || (m.is_photo ? 'photo' : 'document');
+        const dur = m.duration ? `${Math.floor(m.duration / 60)}:${String(Math.round(m.duration % 60)).padStart(2, '0')}` : '';
+        if (kind === 'voice' || kind === 'audio') {
+          mediaHtml = `
+            <audio class="msg-audio" controls preload="none" src="${mediaUrl}"></audio>
+            <div class="msg-media-meta">${kind === 'voice' ? 'Голосовое сообщение' : escapeHtml(m.file_name || 'Аудио')}${dur ? ' · ' + dur : ''}</div>`;
+        } else if (kind === 'video_note' || kind === 'video') {
+          mediaHtml = `<video class="msg-video ${kind === 'video_note' ? 'round' : ''}" controls playsinline preload="metadata" src="${mediaUrl}"></video>
+            ${dur ? `<div class="msg-media-meta">${dur}</div>` : ''}`;
+        } else if (kind === 'photo' || m.is_photo || m.media_type === 'Фото') {
           mediaHtml = `
             <div class="msg-image-wrapper" style="margin-top: 4px;">
               <a href="${mediaUrl}" target="_blank" title="Открыть фото">
@@ -2812,27 +2933,27 @@
     }
 
     // Быстрый белый/черный список
-    async function quickAddToWhitelist() {
-      if (!activeChatId) return;
+    async function quickAddToWhitelist(chatId = activeChatId, title = activeChatTitle) {
+      if (!chatId) return;
       try {
         const res = await fetch('/api/chats/whitelist', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ identifier: activeChatId })
+          body: JSON.stringify({ identifier: chatId })
         });
-        if (res.ok) showToast(`Чат "${activeChatTitle}" добавлен в Белый список!`);
+        if (res.ok) showToast(`Чат "${title}" добавлен в Белый список!`);
       } catch (e) { showToast("Ошибка"); }
     }
 
-    async function quickAddToBlacklist() {
-      if (!activeChatId) return;
+    async function quickAddToBlacklist(chatId = activeChatId, title = activeChatTitle) {
+      if (!chatId) return;
       try {
         const res = await fetch('/api/chats/blacklist', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ identifier: activeChatId })
+          body: JSON.stringify({ identifier: chatId })
         });
-        if (res.ok) showToast(`Чат "${activeChatTitle}" добавлен в список игнорируемых!`);
+        if (res.ok) showToast(`Чат "${title}" добавлен в список игнорируемых!`);
       } catch (e) { showToast("Ошибка"); }
     }
 
@@ -4275,8 +4396,17 @@
   </div>
 
   <script>
-    // Back button: close menu, then chat; report whether anything was closed.
+    // Tap a message to reveal its actions (touch screens have no hover)
+    document.addEventListener('click', (e) => {
+      const bubble = e.target.closest && e.target.closest('#chatMessages .msg-bubble');
+      document.querySelectorAll('.msg-bubble.actions-open').forEach(b => { if (b !== bubble) b.classList.remove('actions-open'); });
+      if (!bubble || e.target.closest('a, button, audio, video, img')) return;
+      bubble.classList.toggle('actions-open');
+    });
+
+    // Back button: close sheet, menu, then chat; report whether anything was closed.
     function handleBack() {
+      if (document.getElementById('chatSheet').classList.contains('open')) { closeChatSheet(); return true; }
       const drawer = document.getElementById('topMenuDrawer');
       if (drawer && drawer.classList.contains('open')) { closeTopMenu(); return true; }
       if (document.body.classList.contains('mobile-chat-open')) { closeMobileChat(); return true; }

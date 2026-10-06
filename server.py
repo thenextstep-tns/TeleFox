@@ -157,6 +157,74 @@ def _resolve_client(session: str):
     return client
 
 
+MEDIA_KIND_LABELS = {
+    "photo": "Фото",
+    "voice": "Голосовое сообщение",
+    "audio": "Аудио",
+    "video_note": "Видеосообщение",
+    "video": "Видео",
+    "document": "Документ",
+}
+MIME_OVERRIDES = {
+    ".oga": "audio/ogg", ".ogg": "audio/ogg", ".opus": "audio/ogg",
+    ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".mp4": "video/mp4", ".webm": "video/webm",
+}
+
+
+def media_kind(m) -> Optional[str]:
+    """Что за вложение в сообщении: photo / voice / audio / video_note / video / document / None."""
+    if getattr(m, "photo", None):
+        return "photo"
+    if getattr(m, "voice", None):
+        return "voice"
+    if getattr(m, "video_note", None):
+        return "video_note"
+    if getattr(m, "audio", None):
+        return "audio"
+    if getattr(m, "video", None):
+        return "video"
+    if getattr(m, "document", None):
+        return "document"
+    return None
+
+
+def media_label(m) -> Optional[str]:
+    kind = media_kind(m)
+    return MEDIA_KIND_LABELS.get(kind) if kind else None
+
+
+def _guess_mime(path: Path, fallback: Optional[str] = None) -> str:
+    return (MIME_OVERRIDES.get(path.suffix.lower())
+            or fallback
+            or mimetypes.guess_type(path.name)[0]
+            or "application/octet-stream")
+
+
+def serve_file(request: Request, path: Path, mime: str) -> Response:
+    """Отдаёт файл с поддержкой Range: без него <audio>/<video> в WebView не умеют перематывать."""
+    size = path.stat().st_size
+    header = request.headers.get("range", "")
+    match = re.match(r"bytes=(\d*)-(\d*)$", header.strip())
+    if not match or not (match.group(1) or match.group(2)):
+        return FileResponse(path, media_type=mime, headers={"Accept-Ranges": "bytes"})
+    if match.group(1):
+        start = int(match.group(1))
+        end = int(match.group(2)) if match.group(2) else size - 1
+    else:  # "bytes=-N" — последние N байт
+        start = max(size - int(match.group(2)), 0)
+        end = size - 1
+    end = min(end, size - 1)
+    if start > end or start >= size:
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+    with open(path, "rb") as f:
+        f.seek(start)
+        body = f.read(end - start + 1)
+    return Response(content=body, status_code=206, media_type=mime, headers={
+        "Content-Range": f"bytes {start}-{end}/{size}",
+        "Accept-Ranges": "bytes",
+    })
+
+
 async def _wait_for_clients():
     """Даёт Telegram-клиентам время подключиться сразу после запуска приложения."""
     for _ in range(CLIENT_WAIT_MAX_STEPS):
@@ -727,10 +795,8 @@ async def get_dialogs(
             if d.message:
                 if d.message.text:
                     last_msg = d.message.text[:SNIPPET_MAX_CHARS]
-                elif d.message.photo:
-                    last_msg = "Фото"
-                elif d.message.document:
-                    last_msg = "Документ"
+                else:
+                    last_msg = media_label(d.message) or ""
 
             username = getattr(d.entity, 'username', '') or ''
             is_forum = getattr(d.entity, 'forum', False)
@@ -787,6 +853,7 @@ async def get_dialogs(
                 "date_timestamp": date_ts,
                 "avatar_url": f"/api/avatar/{session}/{d.id}",
                 "archived": bool(getattr(d, "archived", False)),
+                "pinned": bool(getattr(d, "pinned", False)),
                 "folders": [f["id"] for f in folders if _dialog_in_folder(d, f)],
             })
 
@@ -801,12 +868,9 @@ async def get_dialogs(
         if category_id and category_id != "all":
             results = [d for d in results if (d.get("category_id") == category_id or d.get("category") == category_id)]
 
-        # 3. Сортировка: непрочитанные (кроме мусора) первыми, затем самые свежие по времени сообщения
+        # 3. Сортировка как в Telegram: закреплённые сверху, дальше самые свежие
         def dialog_sort_key(item):
-            cat = item.get("category", "none")
-            has_unread = 0 if (item.get("unread_count", 0) > 0 and cat != "trash") else 1
-            ts_inv = -item.get("date_timestamp", 0.0)
-            return (has_unread, ts_inv)
+            return (0 if item.get("pinned") else 1, -item.get("date_timestamp", 0.0))
 
         results.sort(key=dialog_sort_key)
 
@@ -928,10 +992,11 @@ async def get_chat_messages(
 
         results = []
         for m in reversed(messages):
-            has_media = bool(m.photo or m.document)
-            is_photo = bool(m.photo)
-            is_document = bool(m.document and not m.photo)
-            media_type = "Фото" if is_photo else ("Документ" if is_document else None)
+            kind = media_kind(m)
+            has_media = kind is not None
+            is_photo = kind == "photo"
+            is_document = kind in ("document", "audio", "voice", "video", "video_note")
+            media_type = media_label(m)
             file_name = getattr(m.file, "name", None) if m.file else None
 
             # Автор сообщения
@@ -969,6 +1034,8 @@ async def get_chat_messages(
                 "is_photo": is_photo,
                 "is_document": is_document,
                 "media_type": media_type,
+                "media_kind": kind,
+                "duration": getattr(m.file, "duration", None) if m.file else None,
                 "file_name": file_name,
                 "media_url": f"/api/media/{session}/{chat_id}/{m.id}" if has_media else None,
                 "vin": extract_vin(m.text or "") or (extract_vin(file_name) if file_name else ""),
@@ -984,7 +1051,7 @@ async def get_chat_messages(
         return {"messages": [], "error": str(e)}
 
 @app.get("/api/media/{session}/{chat_id}/{message_id}")
-async def get_message_media(session: str, chat_id: str, message_id: int):
+async def get_message_media(request: Request, session: str, chat_id: str, message_id: int):
     """
     Загрузка и отдача изображений/файлов из Telegram с кэшированием на диск
     """
@@ -994,8 +1061,7 @@ async def get_message_media(session: str, chat_id: str, message_id: int):
     matches = [p for p in MEDIA_CACHE_DIR.glob(f"{session}_{chat_id}_{message_id}.*") if p.suffix != ".part"]
     if matches:
         cache_file = matches[0]
-        mime = mimetypes.guess_type(cache_file.name)[0] or "application/octet-stream"
-        return FileResponse(cache_file, media_type=mime)
+        return serve_file(request, cache_file, _guess_mime(cache_file))
 
     # 2. Скачиваем через Telethon
     client = _resolve_client(session)
@@ -1006,7 +1072,7 @@ async def get_message_media(session: str, chat_id: str, message_id: int):
         c_id = _to_peer(chat_id)
 
         msg = await client.get_messages(c_id, ids=message_id)
-        if not msg or not (msg.photo or msg.document):
+        if not msg or media_kind(msg) is None:
             raise HTTPException(status_code=404, detail="В сообщении нет медиафайла")
 
         ext = ".jpg" if msg.photo else (getattr(msg.file, "ext", ".bin") or ".bin")
@@ -1017,8 +1083,7 @@ async def get_message_media(session: str, chat_id: str, message_id: int):
         await client.download_media(msg, file=str(part_path))
         part_path.replace(target_path)
 
-        mime = getattr(msg.file, "mime_type", None) or mimetypes.guess_type(target_path.name)[0] or "application/octet-stream"
-        return FileResponse(target_path, media_type=mime)
+        return serve_file(request, target_path, _guess_mime(target_path, getattr(msg.file, "mime_type", None)))
     except Exception as e:
         logger.error(f"Ошибка загрузки медиа {chat_id}/{message_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

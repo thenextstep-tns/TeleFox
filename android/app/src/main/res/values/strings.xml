@@ -24,5 +24,6 @@
     <string name="update_token_hint">github_pat_…</string>
     <string name="update_token_save">Сохранить</string>
     <string name="update_allow_install">Разрешите TeleFox устанавливать приложения и нажмите «Обновить» ещё раз</string>
+    <string name="telegram_missing">Приложение Telegram не найдено</string>
     <string name="update_failed">Не удалось проверить обновления</string>
 </resources>
