@@ -34,11 +34,22 @@ android {
         }
     }
 
+    signingConfigs {
+        // The installed app is signed with the debug key, so releases must be too (updates are
+        // only accepted when the signature matches). CI restores that key and points here.
+        release {
+            storeFile file(System.getenv("KEYSTORE_PATH") ?: "${System.getProperty('user.home')}/.android/debug.keystore")
+            storePassword "android"
+            keyAlias "androiddebugkey"
+            keyPassword "android"
+        }
+    }
+
     buildTypes {
         release {
-            // Signed with the existing debug key so it installs over the current app,
+            // Signed with the existing debug key (see signingConfigs) so it installs over the current app,
             // but not debuggable (debuggable builds are a Play Protect red flag).
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
             debuggable false
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'

@@ -45,9 +45,7 @@ jobs:
         run: |
           mkdir -p ~/.android
           echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
-          echo "keystore: $(wc -c < ~/.android/debug.keystore) bytes, sha256 $(sha256sum ~/.android/debug.keystore | cut -c1-16)"
-          keytool -list -v -keystore ~/.android/debug.keystore -storepass android | grep SHA256
-          env | grep -i "ANDROID_USER_HOME\|ANDROID_SDK_HOME" || true
+          echo "KEYSTORE_PATH=$HOME/.android/debug.keystore" >> "$GITHUB_ENV"
 
       - name: Build release APK
         run: |
