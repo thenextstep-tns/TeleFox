@@ -1,0 +1,394 @@
+{
+  "name": "Telegram Doc Pipeline (Vision AI -> Cloud -> amoCRM)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram-doc",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook (Входящий файл из Telegram)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "webhookId": "telegram-doc"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Нормализация полученных метаданных из multipart/form-data\nconst body = $input.first().json.body || $input.first().json;\n\nreturn {\n  json: {\n    sender_id: body.sender_id || '',\n    sender_phone: body.sender_phone || '',\n    sender_username: body.sender_username || '',\n    first_name: body.first_name || '',\n    last_name: body.last_name || '',\n    full_name: `${body.first_name || ''} ${body.last_name || ''}`.trim(),\n    chat_id: body.chat_id || '',\n    message_id: body.message_id || '',\n    caption: body.caption || '',\n    account_phone: body.account_phone || '',\n    account_session: body.account_session || '',\n    received_at: new Date().toISOString()\n  },\n  pairedItem: {\n    item: 0\n  }\n};"
+      },
+      "id": "parse-metadata",
+      "name": "Парсинг метаданных",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "key",
+              "value": "={{ $env.GEMINI_API_KEY || 'YOUR_GEMINI_API_KEY' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\"text\": \"Классифицируй тип документа. Допустимые типы: passport, inn, snils, driver_license, bank_statement, contract, unknown. Также извлеки ФИО владельца документа при наличии.\"},\n        {\n          \"inline_data\": {\n            \"mime_type\": \"{{ $binary.file.mimeType || 'image/jpeg' }}\",\n            \"data\": \"{{ $binary.file.data }}\"\n          }\n        }\n      ]\n    }\n  ],\n  \"generationConfig\": {\n    \"response_mime_type\": \"application/json\",\n    \"response_schema\": {\n      \"type\": \"OBJECT\",\n      \"properties\": {\n        \"document_type\": { \"type\": \"STRING\" },\n        \"client_full_name\": { \"type\": \"STRING\" }\n      },\n      \"required\": [\"document_type\"]\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "gemini-vision-ai",
+      "name": "[Этап 1] Gemini 2.5 Flash (Vision AI)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Извлечение распознанных данных из ответа Gemini\nlet parsedDoc = {\n  document_type: 'unknown',\n  client_full_name: ''\n};\n\ntry {\n  const rawText = $input.first().json.candidates[0].content.parts[0].text;\n  parsedDoc = JSON.parse(rawText);\n} catch (e) {\n  // Резервный вариант, если ответ в другом формате\n}\n\n// Маппинг человекопонятных названий\nconst typeNames = {\n  'passport': 'Паспорт РФ',\n  'inn': 'ИНН',\n  'snils': 'СНИЛС',\n  'driver_license': 'Водительское удостоверение',\n  'bank_statement': 'Банковская выписка',\n  'contract': 'Договор',\n  'unknown': 'Неопознанный документ'\n};\n\nreturn {\n  json: {\n    ...$('Парсинг метаданных').first().json,\n    document_type: parsedDoc.document_type || 'unknown',\n    document_title: typeNames[parsedDoc.document_type] || 'Документ',\n    client_full_name: parsedDoc.client_full_name || ''\n  }\n};"
+      },
+      "id": "process-ai-result",
+      "name": "Обработка ответа AI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://cloud-api.yandex.net/v1/disk/resources?path=Clients/{{ $json.sender_id || $json.sender_phone || 'general' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=OAuth {{ $env.YANDEX_DISK_TOKEN || 'YOUR_YANDEX_TOKEN' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "yandex-create-folder",
+      "name": "[Этап 2] Яндекс Диск - Создание папки",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1180,
+        300
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://cloud-api.yandex.net/v1/disk/resources/upload?path=Clients/{{ $('Обработка ответа AI').first().json.sender_id || 'general' }}/{{ $binary.file.fileName }}&overwrite=true",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=OAuth {{ $env.YANDEX_DISK_TOKEN || 'YOUR_YANDEX_TOKEN' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "yandex-get-upload-url",
+      "name": "[Этап 2] Яндекс Диск - Получить Upload URL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $json.href }}",
+        "sendBinaryData": true,
+        "binaryPropertyName": "file",
+        "options": {}
+      },
+      "id": "yandex-upload-file",
+      "name": "[Этап 2] Яндекс Диск - Загрузка бинарника",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://cloud-api.yandex.net/v1/disk/resources/publish?path=Clients/{{ $('Обработка ответа AI').first().json.sender_id || 'general' }}/{{ $binary.file.fileName }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=OAuth {{ $env.YANDEX_DISK_TOKEN || 'YOUR_YANDEX_TOKEN' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "yandex-publish-file",
+      "name": "[Этап 2] Яндекс Диск - Публикация файла",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://cloud-api.yandex.net/v1/disk/resources?path=Clients/{{ $('Обработка ответа AI').first().json.sender_id || 'general' }}/{{ $binary.file.fileName }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=OAuth {{ $env.YANDEX_DISK_TOKEN || 'YOUR_YANDEX_TOKEN' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "yandex-get-public-url",
+      "name": "[Этап 2] Яндекс Диск - Получить public_url",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2140,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://{{ $env.AMOCRM_SUBDOMAIN || 'your-subdomain' }}.amocrm.ru/api/v4/contacts?query={{ $('Обработка ответа AI').first().json.sender_phone || $('Обработка ответа AI').first().json.sender_username }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AMOCRM_LONG_LIVED_TOKEN || 'YOUR_TOKEN' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "amocrm-search-contact",
+      "name": "[Этап 3] amoCRM - Поиск контакта",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2380,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://{{ $env.AMOCRM_SUBDOMAIN || 'your-subdomain' }}.amocrm.ru/api/v4/leads/{{ $json._embedded.contacts[0]._embedded.leads[0].id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AMOCRM_LONG_LIVED_TOKEN || 'YOUR_TOKEN' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"custom_fields_values\": [\n    {\n      \"field_id\": 712345,\n      \"values\": [\n        {\n          \"value\": \"{{ $('[Этап 2] Яндекс Диск - Получить public_url').first().json.public_url }}\"\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "amocrm-update-lead",
+      "name": "[Этап 3] amoCRM - Обновление поля сделки",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2620,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://{{ $env.AMOCRM_SUBDOMAIN || 'your-subdomain' }}.amocrm.ru/api/v4/leads/{{ $('[Этап 3] amoCRM - Обновление поля сделки').first().json.id }}/notes",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AMOCRM_LONG_LIVED_TOKEN || 'YOUR_TOKEN' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"note_type\": \"common\",\n  \"params\": {\n    \"text\": \"Автоматически загружен документ: {{ $('Обработка ответа AI').first().json.document_title }}\\nФИО: {{ $('Обработка ответа AI').first().json.client_full_name }}\\nСсылка: {{ $('[Этап 2] Яндекс Диск - Получить public_url').first().json.public_url }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "amocrm-add-note",
+      "name": "[Этап 3] amoCRM - Примечание в таймлайн",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook (Входящий файл из Telegram)": {
+      "main": [
+        [
+          {
+            "node": "Парсинг метаданных",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Парсинг метаданных": {
+      "main": [
+        [
+          {
+            "node": "[Этап 1] Gemini 2.5 Flash (Vision AI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "[Этап 1] Gemini 2.5 Flash (Vision AI)": {
+      "main": [
+        [
+          {
+            "node": "Обработка ответа AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Обработка ответа AI": {
+      "main": [
+        [
+          {
+            "node": "[Этап 2] Яндекс Диск - Создание папки",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "[Этап 2] Яндекс Диск - Создание папки": {
+      "main": [
+        [
+          {
+            "node": "[Этап 2] Яндекс Диск - Получить Upload URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "[Этап 2] Яндекс Диск - Получить Upload URL": {
+      "main": [
+        [
+          {
+            "node": "[Этап 2] Яндекс Диск - Загрузка бинарника",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "[Этап 2] Яндекс Диск - Загрузка бинарника": {
+      "main": [
+        [
+          {
+            "node": "[Этап 2] Яндекс Диск - Публикация файла",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "[Этап 2] Яндекс Диск - Публикация файла": {
+      "main": [
+        [
+          {
+            "node": "[Этап 2] Яндекс Диск - Получить public_url",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "[Этап 2] Яндекс Диск - Получить public_url": {
+      "main": [
+        [
+          {
+            "node": "[Этап 3] amoCRM - Поиск контакта",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "[Этап 3] amoCRM - Поиск контакта": {
+      "main": [
+        [
+          {
+            "node": "[Этап 3] amoCRM - Обновление поля сделки",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "[Этап 3] amoCRM - Обновление поля сделки": {
+      "main": [
+        [
+          {
+            "node": "[Этап 3] amoCRM - Примечание в таймлайн",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

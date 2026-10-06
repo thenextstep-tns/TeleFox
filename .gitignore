@@ -1,0 +1,29 @@
+# Secrets and Telegram sessions
+.env
+**/.env
+sessions/
+**/sessions/
+*.session
+*.session-journal
+accounts.json
+notification_settings.json
+telefox-bundle.tar.gz
+
+# Runtime data / caches
+cache/
+downloads/
+*_cache.json
+__pycache__/
+*.pyc
+.DS_Store
+
+# Android build output
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.apk
+
+# Scratch
+scratch_*.py
+telefox_update_qr.png

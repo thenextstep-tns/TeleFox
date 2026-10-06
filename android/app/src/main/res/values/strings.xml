@@ -1,0 +1,22 @@
+<resources>
+    <!-- Set to "owner/repo" of the GitHub repository that publishes releases. -->
+    <string name="github_repo" translatable="false">OWNER/telefox</string>
+    <string name="app_name">TeleFox</string>
+    <string name="channel_messages">Сообщения</string>
+    <string name="channel_messages_quiet">Сообщения (без звука)</string>
+    <string name="channel_service">Фоновая работа</string>
+    <string name="service_title">TeleFox</string>
+    <string name="service_text">Получение сообщений</string>
+    <string name="starting">Запуск…</string>
+    <string name="start_failed">Не удалось запустить</string>
+    <string name="copy_log">Скопировать лог</string>
+    <string name="restart">Перезапустить</string>
+    <string name="log_copied">Лог скопирован</string>
+    <string name="update_title">Доступна версия %1$s</string>
+    <string name="update_message">Вышла новая версия TeleFox.</string>
+    <string name="update_install">Обновить</string>
+    <string name="update_later">Позже</string>
+    <string name="update_downloading">Загрузка обновления…</string>
+    <string name="update_none">Установлена последняя версия</string>
+    <string name="update_failed">Не удалось проверить обновления</string>
+</resources>
