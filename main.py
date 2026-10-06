@@ -364,7 +364,7 @@ async def run_single_client(account: dict, default_api_id: int, default_api_hash
                 p_prefix = f"[{project_name}] " if project_name else ""
                 c_suffix = f" ({category_name})" if category_name and category_name != "Без категории" else ""
                 notif_title = f"{p_prefix}{sender_name}{c_suffix}"
-                body_text = event.raw_text or ("📷 Фотография" if event.photo else ("📄 Документ" if event.document else "Входящее сообщение"))
+                body_text = event.raw_text or ("Фото" if event.photo else ("Документ" if event.document else "Входящее сообщение"))
                 dispatch_android_notification(notif_title, body_text, str(event.chat_id), notif_settings)
                 # Рассылка в браузер для нативных Web Notifications
                 await broadcast_event("native_notification", {

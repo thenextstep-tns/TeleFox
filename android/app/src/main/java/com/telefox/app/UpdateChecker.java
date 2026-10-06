@@ -2,24 +2,17 @@ package com.telefox.app;
 
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.app.DownloadManager;
-import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.net.Uri;
-import android.os.Build;
-import android.os.Environment;
 import android.widget.Toast;
 
-import androidx.core.content.FileProvider;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
-import java.io.File;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -103,43 +96,26 @@ final class UpdateChecker {
         return out;
     }
 
+    /**
+     * Hands the APK link to the browser. The browser downloads it and Android's own installer
+     * takes over, so the app never needs the "install unknown apps" permission, which Play Protect
+     * treats as a strong malware signal.
+     */
+    private static void openDownload(Activity activity, String apkUrl) {
+        try {
+            activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(apkUrl)));
+        } catch (Exception e) {
+            Toast.makeText(activity, R.string.update_failed, Toast.LENGTH_LONG).show();
+        }
+    }
+
     private static void promptInstall(Activity activity, String version, String notes, String apkUrl) {
         if (activity.isFinishing() || activity.isDestroyed()) return;
         new AlertDialog.Builder(activity)
                 .setTitle(activity.getString(R.string.update_title, version))
                 .setMessage(notes.isEmpty() ? activity.getString(R.string.update_message) : notes)
-                .setPositiveButton(R.string.update_install, (d, w) -> download(activity, apkUrl, version))
+                .setPositiveButton(R.string.update_install, (d, w) -> openDownload(activity, apkUrl))
                 .setNegativeButton(R.string.update_later, null)
                 .show();
-    }
-
-    private static void download(Context ctx, String apkUrl, String version) {
-        DownloadManager dm = (DownloadManager) ctx.getSystemService(Context.DOWNLOAD_SERVICE);
-        String name = "TeleFox-" + version + ".apk";
-        File target = new File(ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), name);
-        if (target.exists()) target.delete();
-
-        DownloadManager.Request req = new DownloadManager.Request(Uri.parse(apkUrl))
-                .setTitle(name)
-                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                .setDestinationUri(Uri.fromFile(target));
-        final long id = dm.enqueue(req);
-        Toast.makeText(ctx, R.string.update_downloading, Toast.LENGTH_SHORT).show();
-
-        BroadcastReceiver done = new BroadcastReceiver() {
-            @Override public void onReceive(Context c, Intent i) {
-                if (i.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1) != id) return;
-                c.unregisterReceiver(this);
-                Uri uri = FileProvider.getUriForFile(c, c.getPackageName() + ".files", target);
-                Intent install = new Intent(Intent.ACTION_VIEW)
-                        .setDataAndType(uri, "application/vnd.android.package-archive")
-                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
-                try { c.startActivity(install); }
-                catch (Exception e) { Toast.makeText(c, R.string.update_failed, Toast.LENGTH_LONG).show(); }
-            }
-        };
-        IntentFilter f = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
-        if (Build.VERSION.SDK_INT >= 33) ctx.registerReceiver(done, f, Context.RECEIVER_EXPORTED);
-        else ctx.registerReceiver(done, f);
     }
 }

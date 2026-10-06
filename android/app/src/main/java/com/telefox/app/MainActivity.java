@@ -51,9 +51,15 @@ public class MainActivity extends Activity {
     private static final int DEFAULT_VIBRATION_MS = 100;
     private static final int ERROR_BOX_HEIGHT_DP = 220;
 
+    private static final String PREF_DARK = "dark_theme";
+    private static final int DARK_SURFACE = 0xFF161B22, DARK_BG = 0xFF0D1117;
+    private static final int LIGHT_SURFACE = 0xFFF6F8FA, LIGHT_BG = 0xFFFFFFFF;
+
+    private FrameLayout root;
     private WebView webView;
     private LinearLayout splash;
     private ProgressBar spinner;
+    private TextView splashTitle;
     private TextView splashStatus;
     private LinearLayout errorBox;
     private TextView errorLog;
@@ -69,6 +75,7 @@ public class MainActivity extends Activity {
         pendingChatId = getIntent().getStringExtra(EXTRA_CHAT_ID);
 
         buildUi();
+        applySystemBars(getSharedPreferences("telefox_prefs", MODE_PRIVATE).getBoolean(PREF_DARK, true));
         initWebView();
         requestPermissions();
         startEngine();
@@ -112,6 +119,22 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 
+    /** Keeps status/navigation bars and the window background in step with the page theme. */
+    private void applySystemBars(boolean dark) {
+        int surface = dark ? DARK_SURFACE : LIGHT_SURFACE;
+        int bg = dark ? DARK_BG : LIGHT_BG;
+        getWindow().setStatusBarColor(surface);
+        getWindow().setNavigationBarColor(bg);
+        View decor = getWindow().getDecorView();
+        int flags = decor.getSystemUiVisibility();
+        int lightBars = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+        decor.setSystemUiVisibility(dark ? flags & ~lightBars : flags | lightBars);
+        root.setBackgroundColor(bg);
+        webView.setBackgroundColor(bg);
+        splashStatus.setTextColor(dark ? 0xFF8B949E : 0xFF59636E);
+        splashTitle.setTextColor(dark ? 0xFFE6EDF3 : 0xFF1F2328);
+    }
+
     private int dp(int v) {
         return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics());
     }
@@ -126,7 +149,7 @@ public class MainActivity extends Activity {
     }
 
     private void buildUi() {
-        FrameLayout root = new FrameLayout(this);
+        root = new FrameLayout(this);
         root.setBackgroundColor(getColor(R.color.bg));
 
         webView = new WebView(this);
@@ -140,8 +163,8 @@ public class MainActivity extends Activity {
         splash.setGravity(Gravity.CENTER);
         splash.setPadding(dp(24), dp(24), dp(24), dp(24));
 
-        TextView title = label(getString(R.string.app_name), 24, getColor(R.color.text));
-        title.setTypeface(null, Typeface.BOLD);
+        splashTitle = label(getString(R.string.app_name), 24, getColor(R.color.text));
+        splashTitle.setTypeface(null, Typeface.BOLD);
         spinner = new ProgressBar(this);
         splashStatus = label(getString(R.string.starting), 14, getColor(R.color.text_secondary));
         splashStatus.setPadding(0, dp(12), 0, 0);
@@ -186,7 +209,7 @@ public class MainActivity extends Activity {
         buttons.addView(restart);
         errorBox.addView(buttons);
 
-        splash.addView(title);
+        splash.addView(splashTitle);
         splash.addView(spinner);
         splash.addView(splashStatus);
         splash.addView(errorBox);
@@ -321,8 +344,26 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void setTheme(boolean dark) {
+            getSharedPreferences("telefox_prefs", MODE_PRIVATE).edit().putBoolean(PREF_DARK, dark).apply();
+            runOnUiThread(() -> applySystemBars(dark));
+        }
+
+        @JavascriptInterface
         public void checkForUpdates() {
             runOnUiThread(() -> UpdateChecker.checkIfDue(MainActivity.this, true));
+        }
+
+        @JavascriptInterface
+        public void openNotificationSettings() {
+            try {
+                Intent i = new Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                        .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName())
+                        .putExtra(Settings.EXTRA_CHANNEL_ID, Notifier.CHANNEL_LOUD);
+                startActivity(i);
+            } catch (Exception e) {
+                openAppSettings();
+            }
         }
 
         @JavascriptInterface

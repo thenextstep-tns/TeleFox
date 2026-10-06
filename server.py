@@ -16,7 +16,12 @@ from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from urllib.parse import quote
-from telethon.tl.functions.messages import GetForumTopicsRequest, GetPeerDialogsRequest
+from telethon import utils as tl_utils
+from telethon.tl.functions.messages import (
+    GetForumTopicsRequest,
+    GetPeerDialogsRequest,
+    GetDialogFiltersRequest,
+)
 
 from config import (
     WEB_PORT,
@@ -113,7 +118,9 @@ AVATAR_MISS_TTL_SEC = 3600          # не повторять запрос ав�
 AVATAR_DOWNLOAD_TIMEOUT_SEC = 5.0
 AVATAR_BROWSER_CACHE_SEC = 86400
 READ_STATE_TIMEOUT_SEC = 1.5
-DIALOGS_LIMIT = 100
+DIALOGS_LIMIT = 200
+FOLDERS_CACHE_SEC = 60
+ALL_CHATS_FOLDER_ID = 0
 TOPICS_LIMIT = 100
 MESSAGES_LIMIT = 50
 SNIPPET_MAX_CHARS = 80
@@ -600,6 +607,96 @@ async def logout_api(req: Request):
     })
     return {"success": True, "message": f"Сессия {session_name} отключена"}
 
+# ----------------- Папки Telegram (dialog filters) -----------------
+
+_FOLDERS_CACHE = {}  # session -> (monotonic time, [folder dicts])
+
+
+def _text_of(value) -> str:
+    """Название папки: в новых слоях API это TextWithEntities, в старых — строка."""
+    return str(getattr(value, "text", value) or "")
+
+
+def _peer_ids(peers) -> set:
+    ids = set()
+    for peer in peers or []:
+        try:
+            ids.add(tl_utils.get_peer_id(peer))
+        except Exception:
+            continue
+    return ids
+
+
+async def _load_folders(client, session: str) -> list:
+    """Папки аккаунта в порядке Telegram. Результат кэшируется на FOLDERS_CACHE_SEC."""
+    cached = _FOLDERS_CACHE.get(session)
+    now = asyncio.get_running_loop().time()
+    if cached and now - cached[0] < FOLDERS_CACHE_SEC:
+        return cached[1]
+
+    folders = []
+    try:
+        res = await client(GetDialogFiltersRequest())
+        for f in getattr(res, "filters", res):
+            if not hasattr(f, "include_peers"):
+                continue  # DialogFilterDefault («Все чаты») добавляем сами
+            folders.append({
+                "id": f.id,
+                "title": _text_of(f.title),
+                "emoji": getattr(f, "emoticon", "") or "",
+                "include": _peer_ids(f.include_peers) | _peer_ids(getattr(f, "pinned_peers", [])),
+                "exclude": _peer_ids(getattr(f, "exclude_peers", [])),
+                "flags": {
+                    name: bool(getattr(f, name, False))
+                    for name in ("contacts", "non_contacts", "groups", "broadcasts", "bots",
+                                 "exclude_muted", "exclude_read", "exclude_archived")
+                },
+            })
+    except Exception as e:
+        logger.warning(f"Не удалось получить папки Telegram: {e}")
+        return cached[1] if cached else []
+
+    _FOLDERS_CACHE[session] = (now, folders)
+    return folders
+
+
+def _is_muted(d) -> bool:
+    until = getattr(getattr(d.dialog, "notify_settings", None), "mute_until", None)
+    if until is None:
+        return False
+    if isinstance(until, datetime):
+        return until.timestamp() > datetime.now().timestamp()
+    return bool(until)
+
+
+def _dialog_in_folder(d, folder: dict) -> bool:
+    if d.id in folder["exclude"]:
+        return False
+    if d.id in folder["include"]:
+        return True
+
+    flags = folder["flags"]
+    entity = d.entity
+    is_bot = d.is_user and bool(getattr(entity, "bot", False))
+    is_contact = d.is_user and not is_bot and bool(getattr(entity, "contact", False))
+    matches_type = (
+        (flags["contacts"] and is_contact)
+        or (flags["non_contacts"] and d.is_user and not is_bot and not is_contact)
+        or (flags["groups"] and d.is_group)
+        or (flags["broadcasts"] and d.is_channel and not d.is_group)
+        or (flags["bots"] and is_bot)
+    )
+    if not matches_type:
+        return False
+    if flags["exclude_muted"] and _is_muted(d):
+        return False
+    if flags["exclude_read"] and not d.unread_count and not getattr(d.dialog, "unread_mark", False):
+        return False
+    if flags["exclude_archived"] and getattr(d, "archived", False):
+        return False
+    return True
+
+
 @app.get("/api/dialogs")
 async def get_dialogs(
     session: str = DEFAULT_SESSION,
@@ -620,6 +717,7 @@ async def get_dialogs(
         except Exception:
             pass
         dialogs = await client.get_dialogs(limit=limit)
+        folders = await _load_folders(client, session)
         results = []
         for d in dialogs:
             if hasattr(d, 'dialog') and hasattr(d.dialog, 'read_outbox_max_id'):
@@ -630,9 +728,9 @@ async def get_dialogs(
                 if d.message.text:
                     last_msg = d.message.text[:SNIPPET_MAX_CHARS]
                 elif d.message.photo:
-                    last_msg = "📷 Фотография"
+                    last_msg = "Фото"
                 elif d.message.document:
-                    last_msg = f"📄 Документ ({getattr(d.message.file, 'name', 'файл')})"
+                    last_msg = "Документ"
 
             username = getattr(d.entity, 'username', '') or ''
             is_forum = getattr(d.entity, 'forum', False)
@@ -687,7 +785,9 @@ async def get_dialogs(
                 "last_message": last_msg,
                 "date": d.date.strftime("%d.%m %H:%M") if d.date else "",
                 "date_timestamp": date_ts,
-                "avatar_url": f"/api/avatar/{session}/{d.id}"
+                "avatar_url": f"/api/avatar/{session}/{d.id}",
+                "archived": bool(getattr(d, "archived", False)),
+                "folders": [f["id"] for f in folders if _dialog_in_folder(d, f)],
             })
 
         # 1. Фильтрация по проекту
@@ -723,7 +823,8 @@ async def get_dialogs(
                 or q_clean in str(d["id"])
             ]
 
-        return {"dialogs": results}
+        folder_list = [{"id": f["id"], "title": f["title"], "emoji": f["emoji"]} for f in folders]
+        return {"dialogs": results, "folders": folder_list}
     except Exception as e:
         logger.error(f"Ошибка получения диалогов: {e}")
         return {"dialogs": [], "error": str(e)}
