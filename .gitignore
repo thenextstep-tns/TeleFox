@@ -27,3 +27,6 @@ android/local.properties
 # Scratch
 scratch_*.py
 telefox_update_qr.png
+
+# Mirrored from the repo root by the syncPython Gradle task
+android/app/src/main/python/

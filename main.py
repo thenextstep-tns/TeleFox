@@ -7,6 +7,7 @@ import uvicorn
 from telethon import TelegramClient, events
 
 from config import (
+    WEB_PORT,
     SESSIONS_DIR,
     TELEGRAM_API_ID,
     TELEGRAM_API_HASH,
@@ -14,7 +15,7 @@ from config import (
     load_accounts,
 )
 from uploader import send_to_n8n
-from rules import apply_business_rules, is_chat_allowed, load_rules
+from rules import apply_business_rules, is_chat_allowed, load_rules, passes_filters
 from db import init_db, save_document, log_event, extract_vin, get_chat_category, CATEGORY_TITLES
 from server import app, ACTIVE_CLIENTS, record_intercepted_doc, broadcast_event
 from telefox_service import (
@@ -102,6 +103,8 @@ async def handle_incoming_media(
         logger.info(f"[{session_name}] Чат {event.chat_id} (@{sender_username}) пропущен: {reason}")
         return
 
+    sender_is_bot = bool(getattr(sender, "bot", False))
+
     filename = None
     mime_type = "application/octet-stream"
 
@@ -116,6 +119,11 @@ async def handle_incoming_media(
         elif event.document:
             ext = getattr(event.file, "ext", ".bin") or ".bin"
             filename = f"document_{event.id}{ext}"
+
+    filters_ok, filters_reason = passes_filters(filename, sender_is_bot, rules)
+    if not filters_ok:
+        logger.info(f"[{session_name}] Документ '{filename}' пропущен фильтрами: {filters_reason}")
+        return
 
     caption = event.raw_text or ""
     detected_vin = extract_vin(caption) or extract_vin(filename)
@@ -148,10 +156,6 @@ async def handle_incoming_media(
             "id": project_id or "",
             "name": project_name or "",
             "type": project_type or "general"
-        },
-        "category": {
-            "id": category_id or "none",
-            "name": category_name or "Без категории"
         },
         "process": {
             "name": process_name or "",
@@ -299,7 +303,7 @@ async def run_single_client(account: dict, default_api_id: int, default_api_hash
         try:
             # База может быть недоступна — уведомление не должно из-за этого зависать
             cat_info = await asyncio.wait_for(
-                get_chat_category(str(event.chat_id), str(topic_id) if topic_id else None), timeout=3)
+                get_chat_category(str(event.chat_id), str(topic_id) if topic_id else None), timeout=CATEGORY_LOOKUP_TIMEOUT_SEC)
         except Exception:
             cat_info = None
         category_id = cat_info.get("category_id") or cat_info.get("category", "none") if cat_info else "none"
@@ -401,7 +405,7 @@ async def run_single_client(account: dict, default_api_id: int, default_api_hash
                     client._message_box.end_difference()
                 except Exception:
                     pass
-            await asyncio.sleep(2)
+            await asyncio.sleep(RECONNECT_DELAY_SEC)
             try:
                 if not client.is_connected():
                     await client.connect()
@@ -414,7 +418,10 @@ async def run_single_client(account: dict, default_api_id: int, default_api_hash
 
 # На телефоне API с сессиями Telegram доступен только самому приложению.
 BIND_HOST = "127.0.0.1" if os.environ.get("TELEFOX_DATA_DIR") else "0.0.0.0"
-SYNC_INTERVAL_SEC = 60
+SYNC_INTERVAL_SEC = 60          # как часто проверять соединение и догружать пропущенное
+CATCH_UP_TIMEOUT_SEC = 45       # максимум на одну догрузку обновлений
+CATEGORY_LOOKUP_TIMEOUT_SEC = 3 # база категорий не должна задерживать уведомление
+RECONNECT_DELAY_SEC = 2
 
 
 async def keep_in_sync(client: TelegramClient, session_name: str):
@@ -425,15 +432,15 @@ async def keep_in_sync(client: TelegramClient, session_name: str):
             if not client.is_connected():
                 logger.info(f"[{session_name}] Соединение потеряно, переподключаюсь...")
                 await client.connect()
-            await asyncio.wait_for(client.catch_up(), timeout=45)
+            await asyncio.wait_for(client.catch_up(), timeout=CATCH_UP_TIMEOUT_SEC)
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.warning(f"[{session_name}] Синхронизация не удалась: {e}")
 
 
-async def run_web_server(port: int = 5050):
-    """Запуск FastAPI сервера панели управления на порту 5050"""
+async def run_web_server(port: int = WEB_PORT):
+    """Запуск FastAPI сервера панели управления на локальном порту"""
     config = uvicorn.Config(
         app=app,
         host=BIND_HOST,
@@ -447,13 +454,13 @@ async def run_web_server(port: int = 5050):
 
 async def main():
     print("=" * 65)
-    print("   TELEFOX AUTONOMOUS ENGINE (PORT 5050)")
+    print("   TELEFOX AUTONOMOUS ENGINE")
     print("=" * 65)
 
     # 1. Запуск локального веб-сервера сразу же (WebView сможет подключиться за <500мс)
-    web_task = asyncio.create_task(run_web_server(port=5050))
+    web_task = asyncio.create_task(run_web_server())
 
-    # 2. Инициализация базы данных в фоновом режиме (не блокируя порт 5050)
+    # 2. Инициализация базы данных в фоновом режиме (не блокируя веб-сервер)
     async def try_init_db():
         try:
             await init_db()
@@ -499,16 +506,21 @@ def ensure_writable_environment(data_dir: str):
     
     src_dir = Path(__file__).resolve().parent
     
+    # .env — конфигурация приложения, обновляется вместе с APK.
+    # Остальное — данные пользователя (аккаунты, правила, кэши): копируем только при первом запуске.
+    always_refresh = {".env"}
     for fname in [".env", "accounts.json", "rules.json", "projects_cache.json", "categories_cache.json"]:
         src_file = src_dir / fname
         dest_file = target_dir / fname
-        if src_file.exists():
-            if not dest_file.exists() or dest_file.stat().st_size == 0 or src_file.stat().st_mtime > dest_file.stat().st_mtime:
-                try:
-                    shutil.copy2(src_file, dest_file)
-                except Exception as e:
-                    logger.warning(f"Не удалось скопировать {fname}: {e}")
-            
+        if not src_file.exists():
+            continue
+        missing = not dest_file.exists() or dest_file.stat().st_size == 0
+        if missing or fname in always_refresh:
+            try:
+                shutil.copy2(src_file, dest_file)
+            except Exception as e:
+                logger.warning(f"Не удалось скопировать {fname}: {e}")
+
     src_sessions = src_dir / "sessions"
     dest_sessions = target_dir / "sessions"
     try:

@@ -1,5 +1,7 @@
 import os
+import re
 import json
+import mimetypes
 import asyncio
 import logging
 import sqlite3
@@ -13,9 +15,11 @@ from fastapi import FastAPI, Request, HTTPException, Response, Query
 from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from telethon.tl.functions.messages import GetForumTopicsRequest
+from urllib.parse import quote
+from telethon.tl.functions.messages import GetForumTopicsRequest, GetPeerDialogsRequest
 
 from config import (
+    WEB_PORT,
     load_accounts,
     BASE_DIR,
     SESSIONS_DIR,
@@ -101,6 +105,58 @@ AVATAR_SEMAPHORE = asyncio.Semaphore(2)
 
 ACTIVE_CLIENTS = {}
 CLIENT_STARTER = None
+
+DEFAULT_SESSION = "telefox_mobile"
+CLIENT_WAIT_STEP_SEC = 0.2          # ожидание запуска Telegram-клиента сразу после старта
+CLIENT_WAIT_MAX_STEPS = 15
+AVATAR_MISS_TTL_SEC = 3600          # не повторять запрос аватарки, которой нет
+AVATAR_DOWNLOAD_TIMEOUT_SEC = 5.0
+AVATAR_BROWSER_CACHE_SEC = 86400
+READ_STATE_TIMEOUT_SEC = 1.5
+DIALOGS_LIMIT = 100
+TOPICS_LIMIT = 100
+MESSAGES_LIMIT = 50
+SNIPPET_MAX_CHARS = 80
+OWN_SENDER_NAME = "Вы"
+_SAFE_PATH_PART = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def _safe_part(value) -> str:
+    """Значение, попадающее в имя файла кэша, не должно содержать путь."""
+    value = str(value)
+    if not _SAFE_PATH_PART.match(value) or value in (".", ".."):
+        raise HTTPException(status_code=400, detail="Недопустимый идентификатор")
+    return value
+
+
+def _to_peer(chat_id):
+    """Telegram-идентификатор: число либо @username строкой."""
+    try:
+        return int(chat_id)
+    except (TypeError, ValueError):
+        return chat_id
+
+
+def _normalize_phone(value) -> str:
+    value = str(value or "").strip()
+    return value if not value or value.startswith("+") else "+" + value
+
+
+def _resolve_client(session: str):
+    """Клиент нужной сессии; если её нет — любой активный (на телефоне он один)."""
+    client = ACTIVE_CLIENTS.get(session)
+    if not client and ACTIVE_CLIENTS:
+        client = next(iter(ACTIVE_CLIENTS.values()))
+    return client
+
+
+async def _wait_for_clients():
+    """Даёт Telegram-клиентам время подключиться сразу после запуска приложения."""
+    for _ in range(CLIENT_WAIT_MAX_STEPS):
+        if ACTIVE_CLIENTS:
+            return
+        await asyncio.sleep(CLIENT_WAIT_STEP_SEC)
+
 
 LOG_BUFFER = deque(maxlen=300)
 LOG_SUBSCRIBERS = set()
@@ -250,7 +306,7 @@ async def get_status():
         })
     return {
         "status": "online",
-        "port": 5050,
+        "port": WEB_PORT,
         "accounts": client_statuses
     }
 
@@ -288,7 +344,7 @@ async def stream_events():
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.get("/api/auth/status")
-async def get_auth_status(session: str = "telefox_mobile"):
+async def get_auth_status(session: str = DEFAULT_SESSION):
     client = ACTIVE_CLIENTS.get(session)
     if client and client.is_connected():
         try:
@@ -357,7 +413,7 @@ async def get_auth_status(session: str = "telefox_mobile"):
 @app.post("/api/auth/send-code")
 async def send_code_api(req: Request):
     data = await req.json()
-    session_name = data.get("session", "telefox_mobile").strip() or "telefox_mobile"
+    session_name = data.get("session", DEFAULT_SESSION).strip() or DEFAULT_SESSION
     phone = data.get("phone", "").strip() or TELEGRAM_PHONE
     if not phone:
         return {"success": False, "error": "Номер телефона не указан"}
@@ -432,7 +488,7 @@ async def send_code_api(req: Request):
 @app.post("/api/auth/verify-code")
 async def verify_code_api(req: Request):
     data = await req.json()
-    session_name = data.get("session", "telefox_mobile").strip() or "telefox_mobile"
+    session_name = data.get("session", DEFAULT_SESSION).strip() or DEFAULT_SESSION
     code = str(data.get("code", "")).strip()
     password = data.get("password", "").strip() or TELEGRAM_2FA_PASSWORD
 
@@ -491,7 +547,7 @@ async def verify_code_api(req: Request):
 
     acc_entry = {
         "session_name": session_name,
-        "phone": f"+{user_info['phone']}" if user_info.get("phone") and not str(user_info["phone"]).startswith("+") else (str(user_info.get("phone")) or phone),
+        "phone": _normalize_phone(user_info.get("phone")) or phone,
         "user_id": user_info["id"],
         "username": user_info["username"],
         "first_name": user_info["first_name"],
@@ -518,7 +574,7 @@ async def verify_code_api(req: Request):
 @app.post("/api/auth/logout")
 async def logout_api(req: Request):
     data = await req.json()
-    session_name = data.get("session", "telefox_mobile").strip() or "telefox_mobile"
+    session_name = data.get("session", DEFAULT_SESSION).strip() or DEFAULT_SESSION
     client = ACTIVE_CLIENTS.pop(session_name, None)
     if client:
         try:
@@ -546,24 +602,17 @@ async def logout_api(req: Request):
 
 @app.get("/api/dialogs")
 async def get_dialogs(
-    session: str = "telefox_mobile",
-    limit: int = 100,
+    session: str = DEFAULT_SESSION,
+    limit: int = DIALOGS_LIMIT,
     q: Optional[str] = None,
     project_id: Optional[str] = None,
     category_id: Optional[str] = None
 ):
-    if not ACTIVE_CLIENTS:
-        for _ in range(10):
-            await asyncio.sleep(0.2)
-            if ACTIVE_CLIENTS:
-                break
+    await _wait_for_clients()
 
-    client = ACTIVE_CLIENTS.get(session)
+    client = _resolve_client(session)
     if not client:
-        if ACTIVE_CLIENTS:
-            client = next(iter(ACTIVE_CLIENTS.values()))
-        else:
-            return {"dialogs": [], "warning": "Сессия Telegram не подключена. Войдите в аккаунт ниже.", "unauthorized": True}
+        return {"dialogs": [], "warning": "Сессия Telegram не подключена. Войдите в аккаунт ниже.", "unauthorized": True}
 
     try:
         try:
@@ -579,7 +628,7 @@ async def get_dialogs(
             last_msg = ""
             if d.message:
                 if d.message.text:
-                    last_msg = d.message.text[:80]
+                    last_msg = d.message.text[:SNIPPET_MAX_CHARS]
                 elif d.message.photo:
                     last_msg = "📷 Фотография"
                 elif d.message.document:
@@ -680,28 +729,18 @@ async def get_dialogs(
         return {"dialogs": [], "error": str(e)}
 
 @app.get("/api/dialogs/{chat_id}/topics")
-async def get_dialog_topics(chat_id: str, session: str = "account_1"):
+async def get_dialog_topics(chat_id: str, session: str = DEFAULT_SESSION):
     """
     Возвращает список топиков (веток) форум-супергруппы
     """
-    if not ACTIVE_CLIENTS:
-        for _ in range(15):
-            await asyncio.sleep(0.3)
-            if ACTIVE_CLIENTS:
-                break
+    await _wait_for_clients()
 
-    client = ACTIVE_CLIENTS.get(session)
+    client = _resolve_client(session)
     if not client:
-        if ACTIVE_CLIENTS:
-            client = next(iter(ACTIVE_CLIENTS.values()))
-        else:
-            return {"topics": [], "warning": "Нет подключенных активных клиентов"}
+        return {"topics": [], "warning": "Нет подключенных активных клиентов"}
 
     try:
-        try:
-            c_id = int(chat_id)
-        except ValueError:
-            c_id = chat_id
+        c_id = _to_peer(chat_id)
 
         entity = await client.get_entity(c_id)
         is_forum = getattr(entity, 'forum', False)
@@ -713,7 +752,7 @@ async def get_dialog_topics(chat_id: str, session: str = "account_1"):
             offset_date=None,
             offset_id=0,
             offset_topic=0,
-            limit=100
+            limit=TOPICS_LIMIT
         ))
 
         topics_list = []
@@ -755,28 +794,18 @@ async def get_dialog_topics(chat_id: str, session: str = "account_1"):
 @app.get("/api/dialogs/{chat_id}/messages")
 async def get_chat_messages(
     chat_id: str,
-    session: str = "account_1",
+    session: str = DEFAULT_SESSION,
     topic_id: Optional[int] = None,
-    limit: int = 50
+    limit: int = MESSAGES_LIMIT
 ):
-    if not ACTIVE_CLIENTS:
-        for _ in range(15):
-            await asyncio.sleep(0.3)
-            if ACTIVE_CLIENTS:
-                break
+    await _wait_for_clients()
 
-    client = ACTIVE_CLIENTS.get(session)
+    client = _resolve_client(session)
     if not client:
-        if ACTIVE_CLIENTS:
-            client = next(iter(ACTIVE_CLIENTS.values()))
-        else:
-            return {"messages": [], "warning": "Нет подключенных активных клиентов"}
+        return {"messages": [], "warning": "Нет подключенных активных клиентов"}
 
     try:
-        try:
-            entity_id = int(chat_id)
-        except ValueError:
-            entity_id = chat_id
+        entity_id = _to_peer(chat_id)
 
         if topic_id:
             messages = await client.get_messages(entity_id, reply_to=topic_id, limit=limit)
@@ -787,12 +816,14 @@ async def get_chat_messages(
         read_outbox_max_id = CACHE_READ_OUTBOX_MAX_ID.get(cache_key, 0)
         if not read_outbox_max_id:
             try:
-                dialogs_peek = await asyncio.wait_for(client.get_dialogs(limit=1, offset_peer=entity_id), timeout=1.5)
-                if dialogs_peek and hasattr(dialogs_peek[0], 'dialog') and hasattr(dialogs_peek[0].dialog, 'read_outbox_max_id'):
-                    read_outbox_max_id = dialogs_peek[0].dialog.read_outbox_max_id or 0
+                peer = await client.get_input_entity(entity_id)
+                state = await asyncio.wait_for(
+                    client(GetPeerDialogsRequest(peers=[peer])), timeout=READ_STATE_TIMEOUT_SEC)
+                if state.dialogs:
+                    read_outbox_max_id = state.dialogs[0].read_outbox_max_id or 0
                     CACHE_READ_OUTBOX_MAX_ID[cache_key] = read_outbox_max_id
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Не удалось получить статус прочтения {entity_id}: {e}")
 
         results = []
         for m in reversed(messages):
@@ -816,7 +847,7 @@ async def get_chat_messages(
             elif getattr(m, "post_author", None):
                 sender_name = m.post_author
             elif m.out:
-                sender_name = "Вы"
+                sender_name = OWN_SENDER_NAME
             elif sender_id:
                 sender_name = f"Участник {sender_id}"
             else:
@@ -856,28 +887,22 @@ async def get_message_media(session: str, chat_id: str, message_id: int):
     """
     Загрузка и отдача изображений/файлов из Telegram с кэшированием на диск
     """
-    # 1. Проверяем локальный кэш
-    matches = list(MEDIA_CACHE_DIR.glob(f"{session}_{chat_id}_{message_id}.*"))
+    session, chat_id = _safe_part(session), _safe_part(chat_id)
+
+    # 1. Проверяем локальный кэш (завершённые загрузки, без суффикса .part)
+    matches = [p for p in MEDIA_CACHE_DIR.glob(f"{session}_{chat_id}_{message_id}.*") if p.suffix != ".part"]
     if matches:
         cache_file = matches[0]
-        ext = cache_file.suffix.lower()
-        mime = "image/jpeg" if ext in (".jpg", ".jpeg") else ("image/png" if ext == ".png" else "application/octet-stream")
-        with open(cache_file, "rb") as f:
-            return Response(content=f.read(), media_type=mime)
+        mime = mimetypes.guess_type(cache_file.name)[0] or "application/octet-stream"
+        return FileResponse(cache_file, media_type=mime)
 
     # 2. Скачиваем через Telethon
-    client = ACTIVE_CLIENTS.get(session)
+    client = _resolve_client(session)
     if not client:
-        if ACTIVE_CLIENTS:
-            client = next(iter(ACTIVE_CLIENTS.values()))
-        else:
-            raise HTTPException(status_code=404, detail="Нет активных Telegram клиентов")
+        raise HTTPException(status_code=404, detail="Нет активных Telegram клиентов")
 
     try:
-        try:
-            c_id = int(chat_id)
-        except ValueError:
-            c_id = chat_id
+        c_id = _to_peer(chat_id)
 
         msg = await client.get_messages(c_id, ids=message_id)
         if not msg or not (msg.photo or msg.document):
@@ -886,13 +911,13 @@ async def get_message_media(session: str, chat_id: str, message_id: int):
         ext = ".jpg" if msg.photo else (getattr(msg.file, "ext", ".bin") or ".bin")
         target_path = MEDIA_CACHE_DIR / f"{session}_{chat_id}_{message_id}{ext}"
 
-        await client.download_media(msg, file=str(target_path))
+        # Качаем во временный файл, чтобы оборванная загрузка не осталась в кэше
+        part_path = target_path.with_name(target_path.name + ".part")
+        await client.download_media(msg, file=str(part_path))
+        part_path.replace(target_path)
 
-        mime = "image/jpeg" if ext.lower() in (".jpg", ".jpeg") else (getattr(msg.file, "mime_type", "application/octet-stream") or "application/octet-stream")
-        with open(target_path, "rb") as f:
-            content = f.read()
-
-        return Response(content=content, media_type=mime)
+        mime = getattr(msg.file, "mime_type", None) or mimetypes.guess_type(target_path.name)[0] or "application/octet-stream"
+        return FileResponse(target_path, media_type=mime)
     except Exception as e:
         logger.error(f"Ошибка загрузки медиа {chat_id}/{message_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -902,10 +927,12 @@ async def get_entity_avatar(session: str, entity_id: str):
     """
     Загрузка и отдача аватарки профиля пользователя или группы с кэшированием на диск
     """
+    session, entity_id = _safe_part(session), _safe_part(entity_id)
+
     # 1. Проверяем кэш отсутствия аватарки (чтобы не спамить Telegram API повторными запросами)
     none_marker = AVATAR_CACHE_DIR / f"{session}_{entity_id}.none"
     if none_marker.exists():
-        if (datetime.now().timestamp() - none_marker.stat().st_mtime) < 3600:
+        if (datetime.now().timestamp() - none_marker.stat().st_mtime) < AVATAR_MISS_TTL_SEC:
             raise HTTPException(status_code=404, detail="Аватар отсутствует")
 
     # 2. Проверяем наличие скачанного файла аватарки
@@ -915,22 +942,16 @@ async def get_entity_avatar(session: str, entity_id: str):
             return Response(
                 content=f.read(),
                 media_type="image/jpeg",
-                headers={"Cache-Control": "public, max-age=86400"}
+                headers={"Cache-Control": f"public, max-age={AVATAR_BROWSER_CACHE_SEC}"}
             )
 
     # 3. Скачиваем через Telethon
-    client = ACTIVE_CLIENTS.get(session)
+    client = _resolve_client(session)
     if not client:
-        if ACTIVE_CLIENTS:
-            client = next(iter(ACTIVE_CLIENTS.values()))
-        else:
-            raise HTTPException(status_code=404, detail="Нет активных Telegram клиентов")
+        raise HTTPException(status_code=404, detail="Нет активных Telegram клиентов")
 
     try:
-        try:
-            e_id = int(entity_id)
-        except ValueError:
-            e_id = entity_id
+        e_id = _to_peer(entity_id)
 
         entity = await client.get_entity(e_id)
         if not getattr(entity, 'photo', None):
@@ -940,7 +961,7 @@ async def get_entity_avatar(session: str, entity_id: str):
         async with AVATAR_SEMAPHORE:
             photo_path = await asyncio.wait_for(
                 client.download_profile_photo(entity, file=str(target_path), download_big=False),
-                timeout=5.0
+                timeout=AVATAR_DOWNLOAD_TIMEOUT_SEC
             )
 
         if photo_path and target_path.exists() and target_path.stat().st_size > 0:
@@ -948,7 +969,7 @@ async def get_entity_avatar(session: str, entity_id: str):
                 return Response(
                     content=f.read(),
                     media_type="image/jpeg",
-                    headers={"Cache-Control": "public, max-age=86400"}
+                    headers={"Cache-Control": f"public, max-age={AVATAR_BROWSER_CACHE_SEC}"}
                 )
         else:
             none_marker.touch()
@@ -1024,7 +1045,7 @@ async def api_download_document(doc_id: str):
         content=file_bytes,
         media_type=mime_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": "attachment; filename*=UTF-8''" + quote(filename or "document"),
             "Content-Length": str(len(file_bytes))
         }
     )
@@ -1210,15 +1231,12 @@ async def update_chat_category(payload: dict):
 
         # Тэг "Мусор" автоматически отмечается как прочитанный в Telegram
         if category == "trash":
-            client = ACTIVE_CLIENTS.get(payload.get("session", "account_1"))
+            client = ACTIVE_CLIENTS.get(payload.get("session", DEFAULT_SESSION))
             if not client and ACTIVE_CLIENTS:
                 client = next(iter(ACTIVE_CLIENTS.values()))
             if client:
                 try:
-                    try:
-                        c_id = int(chat_id)
-                    except ValueError:
-                        c_id = chat_id
+                    c_id = _to_peer(chat_id)
                     await client.send_read_acknowledge(c_id)
                     marked_read = True
                 except Exception as e:
@@ -1474,25 +1492,19 @@ async def api_send_message(payload: dict):
     text = payload.get("text", "").strip()
     reply_to_msg_id = payload.get("reply_to_msg_id")
     topic_id = payload.get("topic_id")
-    session = payload.get("session", "account_1")
+    session = payload.get("session", DEFAULT_SESSION)
 
     if not chat_id:
         raise HTTPException(status_code=400, detail="chat_id обязателен")
     if not text:
         raise HTTPException(status_code=400, detail="Текст сообщения не может быть пустым")
 
-    client = ACTIVE_CLIENTS.get(session)
+    client = _resolve_client(session)
     if not client:
-        if ACTIVE_CLIENTS:
-            client = next(iter(ACTIVE_CLIENTS.values()))
-        else:
-            raise HTTPException(status_code=404, detail="Нет активных Telegram клиентов")
+        raise HTTPException(status_code=404, detail="Нет активных Telegram клиентов")
 
     try:
-        try:
-            c_id = int(chat_id)
-        except ValueError:
-            c_id = chat_id
+        c_id = _to_peer(chat_id)
 
         # Если задан reply_to_msg_id — отвечаем на это сообщение
         # Иначе если задан topic_id — отправляем в этот топик форума
@@ -1531,7 +1543,7 @@ async def api_send_message(payload: dict):
             "text": text,
             "is_outgoing": True,
             "is_read": False,
-            "sender_name": "Вы (Менеджер)",
+            "sender_name": OWN_SENDER_NAME,
             "sender_username": my_username,
             "sender_id": my_id,
             "sender_avatar_url": f"/api/avatar/{session}/{my_id}",
@@ -1554,7 +1566,7 @@ async def api_send_message(payload: dict):
 async def api_mark_chat_read(payload: dict):
     """Отметка чата как прочитанного в Telegram"""
     chat_id = payload.get("chat_id")
-    session = payload.get("session", "account_1")
+    session = payload.get("session", DEFAULT_SESSION)
     if not chat_id:
         raise HTTPException(status_code=400, detail="chat_id обязателен")
     client = ACTIVE_CLIENTS.get(session)
@@ -1563,10 +1575,7 @@ async def api_mark_chat_read(payload: dict):
     if not client:
         raise HTTPException(status_code=404, detail="Нет активных клиентов")
     try:
-        try:
-            c_id = int(chat_id)
-        except ValueError:
-            c_id = chat_id
+        c_id = _to_peer(chat_id)
         await client.send_read_acknowledge(c_id)
         await broadcast_event("chat_marked_read", {
             "chat_id": str(chat_id),

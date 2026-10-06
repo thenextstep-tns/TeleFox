@@ -47,6 +47,9 @@ def reload_config(new_base_dir: str):
     MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "teamo")
     DUPLICATE_DOCS_TO_DB = os.getenv("DUPLICATE_DOCS_TO_DB", "true").lower() in ("true", "1", "yes")
 
+# Порт локальной веб-панели (одно место для всех модулей)
+WEB_PORT = int(os.environ.get("TELEFOX_PORT", "5050"))
+
 # Глобальные параметры
 TELEGRAM_API_ID = os.getenv("TELEGRAM_API_ID")
 TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH")

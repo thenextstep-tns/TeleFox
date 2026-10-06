@@ -1,6 +1,6 @@
 <resources>
     <!-- Set to "owner/repo" of the GitHub repository that publishes releases. -->
-    <string name="github_repo" translatable="false">OWNER/telefox</string>
+    <string name="github_repo" translatable="false">thenextstep-tns/TeleFox</string>
     <string name="app_name">TeleFox</string>
     <string name="channel_messages">Сообщения</string>
     <string name="channel_messages_quiet">Сообщения (без звука)</string>

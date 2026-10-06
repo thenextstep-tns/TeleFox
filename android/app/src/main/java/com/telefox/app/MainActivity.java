@@ -42,8 +42,14 @@ import java.net.URL;
 public class MainActivity extends Activity {
 
     public static final String EXTRA_CHAT_ID = "chat_id";
-    private static final String SERVER_URL = "http://127.0.0.1:5050";
-    private static final int MAX_POLL_ATTEMPTS = 60; // 500 ms each
+    private static final String SERVER_URL = "http://127.0.0.1:5050" /* keep in sync with config.WEB_PORT */;
+    private static final int POLL_INTERVAL_MS = 500;
+    private static final int POLL_ATTEMPTS = 60; // 30 s in total
+    private static final int PROBE_TIMEOUT_MS = 600;
+    private static final int RELOAD_DELAY_MS = 2000;
+    private static final int NOTIFICATION_PERMISSION_REQUEST = 101;
+    private static final int DEFAULT_VIBRATION_MS = 100;
+    private static final int ERROR_BOX_HEIGHT_DP = 220;
 
     private WebView webView;
     private LinearLayout splash;
@@ -154,7 +160,7 @@ public class MainActivity extends Activity {
         scroll.setPadding(dp(12), dp(12), dp(12), dp(12));
         scroll.addView(errorLog);
         errorBox.addView(scroll, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(220)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(ERROR_BOX_HEIGHT_DP)));
 
         LinearLayout buttons = new LinearLayout(this);
         buttons.setGravity(Gravity.CENTER);
@@ -204,7 +210,7 @@ public class MainActivity extends Activity {
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (request.isForMainFrame()) {
-                    main.postDelayed(() -> { if (!isDestroyed()) view.loadUrl(SERVER_URL); }, 2000);
+                    main.postDelayed(() -> { if (!isDestroyed()) view.loadUrl(SERVER_URL); }, RELOAD_DELAY_MS);
                 }
             }
 
@@ -238,7 +244,7 @@ public class MainActivity extends Activity {
         polling = true;
         serverReady = false;
         new Thread(() -> {
-            for (int attempt = 1; attempt <= MAX_POLL_ATTEMPTS && polling && !isDestroyed(); attempt++) {
+            for (int attempt = 1; attempt <= POLL_ATTEMPTS && polling && !isDestroyed(); attempt++) {
                 String err = TeleFoxService.lastError;
                 if (err != null) {
                     polling = false;
@@ -247,8 +253,8 @@ public class MainActivity extends Activity {
                 }
                 try {
                     HttpURLConnection c = (HttpURLConnection) new URL(SERVER_URL + "/api/status").openConnection();
-                    c.setConnectTimeout(600);
-                    c.setReadTimeout(600);
+                    c.setConnectTimeout(PROBE_TIMEOUT_MS);
+                    c.setReadTimeout(PROBE_TIMEOUT_MS);
                     int code = c.getResponseCode();
                     c.disconnect();
                     if (code == 200) {
@@ -260,11 +266,11 @@ public class MainActivity extends Activity {
                 } catch (Exception ignored) {
                     // server still starting
                 }
-                try { Thread.sleep(500); } catch (InterruptedException e) { return; }
+                try { Thread.sleep(POLL_INTERVAL_MS); } catch (InterruptedException e) { return; }
             }
             polling = false;
             if (!serverReady && !isDestroyed()) {
-                main.post(() -> showError("Server on 127.0.0.1:5050 did not respond in 30 s."));
+                main.post(() -> showError("Server did not respond in " + (POLL_ATTEMPTS * POLL_INTERVAL_MS / 1000) + " s."));
             }
         }, "TeleFox-Poller").start();
     }
@@ -281,7 +287,7 @@ public class MainActivity extends Activity {
         SharedPreferences prefs = getSharedPreferences("telefox_prefs", MODE_PRIVATE);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 101);
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_REQUEST);
         }
         // Ask for the battery exemption only once, so it doesn't nag on every launch.
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
@@ -311,7 +317,7 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void vibrate(int ms) {
             Vibrator v = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
-            if (v != null) v.vibrate(ms > 0 ? ms : 100);
+            if (v != null) v.vibrate(ms > 0 ? ms : DEFAULT_VIBRATION_MS);
         }
 
         @JavascriptInterface

@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Tuple
@@ -606,23 +607,35 @@ async def get_chat_category(chat_id: str, topic_id: Optional[str] = None) -> Opt
 
     return None
 
-async def load_all_categories() -> Dict[str, Any]:
-    """Загружает все назначенные категории из MongoDB в память или из локального кэша"""
+CATEGORY_REFRESH_SEC = 300  # как часто перечитывать все категории из Atlas
+_categories_loaded_at = 0.0
+
+
+async def load_all_categories(force: bool = False) -> Dict[str, Any]:
+    """Загружает категории из MongoDB в память (не чаще раза в CATEGORY_REFRESH_SEC) или из локального кэша"""
+    global _categories_loaded_at
     if not CATEGORY_CACHE:
         _load_local_caches()
 
     db = get_db()
     if db is None:
         return CATEGORY_CACHE
+    if not force and CATEGORY_CACHE and time.monotonic() - _categories_loaded_at < CATEGORY_REFRESH_SEC:
+        return CATEGORY_CACHE
 
     try:
         cursor = db.chat_categories.find({})
         items_list = []
+        fresh = {}
         async for item in cursor:
             item["id"] = str(item["_id"])
             del item["_id"]
-            CATEGORY_CACHE[item["key"]] = item
+            fresh[item["key"]] = item
             items_list.append(item)
+        # Заменяем кэш целиком, чтобы удалённые в базе категории не оставались в памяти
+        CATEGORY_CACHE.clear()
+        CATEGORY_CACHE.update(fresh)
+        _categories_loaded_at = time.monotonic()
         if items_list:
             _save_categories_cache(items_list)
     except Exception as e:
@@ -632,8 +645,8 @@ async def load_all_categories() -> Dict[str, Any]:
 
 async def get_all_chat_categories() -> List[Dict[str, Any]]:
     """Возвращает список всех категоризированных чатов"""
-    await load_all_categories()
-    return list(CATEGORY_CACHE.values())
+    await load_all_categories(force=True)
+    return [c for c in CATEGORY_CACHE.values() if c]
 
 DEFAULT_PROJECT_TEMPLATES = {
     "auto": {

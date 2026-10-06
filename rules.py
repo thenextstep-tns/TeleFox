@@ -1,12 +1,16 @@
 import os
+import copy
 import json
 import logging
 import aiohttp
 from pathlib import Path
 
+import config
+
 logger = logging.getLogger("rules")
 
-RULES_FILE = Path(__file__).resolve().parent / "rules.json"
+WEBHOOK_TIMEOUT_SEC = 10
+
 
 DEFAULT_RULES = {
     "chat_scope": {
@@ -36,24 +40,45 @@ DEFAULT_RULES = {
     }
 }
 
+def _rules_file() -> Path:
+    # config.BASE_DIR может смениться в reload_config(), поэтому читаем его каждый раз
+    return config.BASE_DIR / "rules.json"
+
 def load_rules() -> dict:
-    if not RULES_FILE.exists():
-        save_rules(DEFAULT_RULES)
-        return DEFAULT_RULES
+    path = _rules_file()
+    if not path.exists():
+        return copy.deepcopy(DEFAULT_RULES)
     try:
-        with open(RULES_FILE, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-            # Гарантируем наличие chat_scope
-            if "chat_scope" not in data:
-                data["chat_scope"] = DEFAULT_RULES["chat_scope"]
-            return data
     except Exception as e:
-        logger.error(f"Ошибка загрузки {RULES_FILE}: {e}")
-        return DEFAULT_RULES
+        logger.error(f"Ошибка загрузки {path}: {e}")
+        return copy.deepcopy(DEFAULT_RULES)
+    # Добавляем отсутствующие секции значениями по умолчанию
+    for key, default in DEFAULT_RULES.items():
+        data.setdefault(key, copy.deepcopy(default))
+    return data
 
 def save_rules(rules_data: dict):
-    with open(RULES_FILE, "w", encoding="utf-8") as f:
-        json.dump(rules_data, f, indent=2, ensure_ascii=False)
+    path = _rules_file()
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(rules_data, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Ошибка сохранения {path}: {e}")
+
+def passes_filters(filename: str, sender_is_bot: bool, rules: dict) -> tuple:
+    """Проверяет раздел `filters` (расширения файлов, боты). Возвращает (ok, reason)."""
+    filters = rules.get("filters", {})
+    if filters.get("ignore_bot_senders") and sender_is_bot:
+        return False, "отправитель — бот"
+    allowed_ext = [e.lower().lstrip(".") for e in filters.get("allowed_extensions", [])]
+    if allowed_ext and filename:
+        ext = os.path.splitext(filename)[1].lower().lstrip(".")
+        # Фото без расширения в имени приходят как photo_<id>.jpg, поэтому пустое расширение пропускаем
+        if ext and ext not in allowed_ext:
+            return False, f"расширение .{ext} не разрешено"
+    return True, ""
 
 def clean_identifier(val) -> str:
     if not val:
@@ -135,8 +160,6 @@ async def apply_business_rules(client, event, metadata: dict, filename: str) -> 
         skip_reason = ""
 
         if mode == "whitelist_only":
-            allowed, _ = is_chat_allowed(event.chat_id, metadata.get("sender_username"), rules)
-            scope_mode = rules.get("chat_scope", {}).get("mode")
             allowed_chats = [clean_identifier(x) for x in rules.get("chat_scope", {}).get("allowed_chats", [])]
             cid = clean_identifier(event.chat_id)
             un = clean_identifier(metadata.get("sender_username"))
@@ -200,7 +223,8 @@ async def apply_business_rules(client, event, metadata: dict, filename: str) -> 
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, headers=headers, timeout=10) as resp:
+                async with session.post(url, json=payload, headers=headers,
+                                        timeout=aiohttp.ClientTimeout(total=WEBHOOK_TIMEOUT_SEC)) as resp:
                     logger.info(f"[Бизнес-правило] Алерт отправлен на Webhook: {url} (HTTP {resp.status})")
                     actions_taken.append({"type": "alert_webhook", "status": "success", "http_status": resp.status})
         except Exception as e:

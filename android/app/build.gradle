@@ -52,6 +52,22 @@ android {
     }
 }
 
+// The Python sources live once, in the repository root. Mirror them into the
+// directory Chaquopy packages, so the PC and Android copies can't drift apart.
+tasks.register('syncPython', Sync) {
+    from(rootProject.projectDir.parentFile) {
+        include '*.py', 'web/**', '.env', 'accounts.json', 'rules.json',
+                'projects_cache.json', 'categories_cache.json'
+        exclude 'scratch_*.py', 'web/*.apk', 'web/*.tar.gz', 'web/telefox_qr.png'
+    }
+    into 'src/main/python'
+}
+tasks.configureEach { task ->
+    if (task.name != 'syncPython' && (task.name == 'preBuild' || task.name.endsWith('PythonSources'))) {
+        task.dependsOn 'syncPython'
+    }
+}
+
 dependencies {
     implementation 'androidx.core:core:1.12.0'
 }
