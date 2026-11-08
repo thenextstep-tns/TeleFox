@@ -1,0 +1,28 @@
+# Secrets and local state never enter this public repo
+.env
+*.local.toml
+service-account*.json
+google-services.json
+*.keystore
+*.jks
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+server/data/
+server/dist/
+server/build/
+server/vendor/
+
+# Android
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/local.properties
+android/tdlib/
+*.apk
+*.aab

@@ -1,0 +1,105 @@
+name: TDLib binaries
+
+# Builds Telegram's official TDLib from the exact commit in tdlib.version, so no
+# third-party binary ever handles the Telegram session. Runs only when the pin changes.
+on:
+  push:
+    branches: [foxygram]
+    paths: ['tdlib.version', '.github/workflows/tdlib.yml']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tdlib
+  cancel-in-progress: true
+
+env:
+  NDK_VERSION: "23.2.8568313"
+
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+      - name: Fetch TDLib source
+        run: |
+          git init td
+          git -C td remote add origin https://github.com/tdlib/td.git
+          git -C td fetch --depth 1 origin "$(cat tdlib.version)"
+          git -C td checkout FETCH_HEAD
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gperf php-cli ninja-build make perl wget unzip
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            "ndk;$NDK_VERSION" "cmake;3.22.1" "platforms;android-34" > /dev/null
+      - name: Build OpenSSL
+        working-directory: td/example/android
+        run: ./build-openssl.sh "$ANDROID_HOME" "$NDK_VERSION" third-party/openssl
+      - name: Build TDLib
+        working-directory: td/example/android
+        env:
+          CMAKE_BUILD_PARALLEL_LEVEL: "4"
+        run: ./build-tdlib.sh "$ANDROID_HOME" "$NDK_VERSION" third-party/openssl c++_static Java 24 "arm64-v8a x86_64"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tdlib-android
+          path: td/example/android/tdlib/tdlib.zip
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+      - name: Fetch TDLib source
+        shell: bash
+        run: |
+          git init td
+          git -C td remote add origin https://github.com/tdlib/td.git
+          git -C td fetch --depth 1 origin "$(cat tdlib.version)"
+          git -C td checkout FETCH_HEAD
+      - name: Install dependencies
+        run: C:\vcpkg\vcpkg.exe install gperf:x64-windows-static openssl:x64-windows-static zlib:x64-windows-static
+      - name: Build tdjson
+        shell: bash
+        run: |
+          mkdir td/build && cd td/build
+          cmake -A x64 -DCMAKE_INSTALL_PREFIX:PATH=../tdlib \
+            -DCMAKE_TOOLCHAIN_FILE:FILEPATH=C:/vcpkg/scripts/buildsystems/vcpkg.cmake \
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static ..
+          cmake --build . --target install --config Release --parallel 4
+      - name: Package
+        shell: bash
+        run: |
+          mkdir out && cp td/tdlib/bin/tdjson.dll out/
+          cd out && 7z a ../tdjson-windows-x64.zip tdjson.dll
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tdjson-windows
+          path: tdjson-windows-x64.zip
+          if-no-files-found: error
+
+  publish:
+    needs: [android, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          merge-multiple: true
+      - name: Publish as a prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A prerelease never counts as "latest", which TeleFox's updater reads.
+          SHA="$(cat tdlib.version)"
+          TAG="tdlib-${SHA:0:12}"
+          mv tdlib.zip tdlib-android.zip
+          sha256sum tdlib-android.zip tdjson-windows-x64.zip > SHA256SUMS
+          gh release delete "$TAG" -y --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" tdlib-android.zip tdjson-windows-x64.zip SHA256SUMS \
+            --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "TDLib ${SHA:0:12}" --notes "Built from tdlib/td@${SHA}."
