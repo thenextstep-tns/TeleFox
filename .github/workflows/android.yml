@@ -1,0 +1,61 @@
+name: FoxyGram app
+
+on:
+  push:
+    branches: [foxygram]
+    paths: ['android/**', 'tdlib.version', '.github/workflows/android.yml']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: foxygram-app
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install SDK packages
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-36" "build-tools;36.0.0" > /dev/null
+
+      # Every release must carry the same signature or Android refuses to update in place.
+      - name: Restore signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
+        run: |
+          mkdir -p ~/.android
+          echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+          echo "KEYSTORE_PATH=$HOME/.android/debug.keystore" >> "$GITHUB_ENV"
+
+      - name: Test
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest --tests 'app.foxygram.LogicTest' --console=plain
+
+      - name: Build
+        working-directory: android
+        run: |
+          VERSION="0.1.${GITHUB_RUN_NUMBER}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          ./gradlew :app:assembleRelease --console=plain \
+            -PappVersionName="$VERSION" -PappVersionCode="$GITHUB_RUN_NUMBER"
+
+      # Marked as a prerelease so it is never mistaken for a TeleFox update.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk FoxyGram.apk
+          git log -1 --format=%B > notes.txt
+          gh release create "foxygram-v${VERSION}" FoxyGram.apk \
+            --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "FoxyGram ${VERSION}" --notes-file notes.txt

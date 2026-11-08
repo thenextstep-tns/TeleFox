@@ -1,0 +1,57 @@
+name: FoxyGram server
+
+on:
+  push:
+    branches: [foxygram]
+    paths: ['server/**', 'tdlib.version', '.github/workflows/server.yml']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: foxygram-server
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Fetch TDLib
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA="$(cat tdlib.version)"
+          mkdir -p server/vendor
+          gh release download "tdlib-${SHA:0:12}" -p tdjson-windows-x64.zip -O td.zip
+          7z x td.zip -oserver/vendor -y > /dev/null
+
+      - name: Test
+        working-directory: server
+        run: uv run --python 3.12 pytest -q
+
+      - name: Build
+        working-directory: server
+        run: |
+          uv run --python 3.12 pyinstaller --noconfirm --windowed --name FoxyGramServer \
+            --add-binary "vendor/tdjson.dll;." \
+            --collect-submodules uvicorn --collect-submodules foxygram \
+            --paths src packaging/launcher.py
+          cp packaging/install.cmd packaging/install.ps1 packaging/uninstall.cmd packaging/README.txt dist/FoxyGramServer/
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="0.1.${GITHUB_RUN_NUMBER}"
+          cd server/dist && 7z a ../../FoxyGram-Server-Windows.zip FoxyGramServer > /dev/null && cd ../..
+          git log -1 --format=%B > notes.txt
+          gh release create "foxygram-server-v${VERSION}" FoxyGram-Server-Windows.zip \
+            --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "FoxyGram Server ${VERSION}" --notes-file notes.txt

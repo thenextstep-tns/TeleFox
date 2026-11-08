@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "Always-on companion server for FoxyGram"
 requires-python = ">=3.12"
 dependencies = [
-    "cryptography>=43",
     "fastapi>=0.115",
     "segno>=1.6",
     "uvicorn>=0.32",

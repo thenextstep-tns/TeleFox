@@ -103,19 +103,23 @@ class TdClient:
         while not self._stop.is_set():
             raw = receive(1.0)
             if raw and self._loop:
-                self._loop.call_soon_threadsafe(self._queue.put_nowait, json.loads(raw))
+                self._loop.call_soon_threadsafe(self._route, json.loads(raw))
+
+    def _route(self, event: dict[str, Any]) -> None:
+        """Replies skip the queue: an update handler may be awaiting one, and it holds the queue."""
+        extra = event.pop("@extra", None)
+        future = self._pending.get(extra) if extra is not None else None
+        if future is not None:
+            if not future.done():
+                future.set_result(event)
+            return
+        self._queue.put_nowait(event)
 
     async def _dispatch(self) -> None:
         while True:
             event = await self._queue.get()
             if event is None:
                 return
-            extra = event.pop("@extra", None)
-            if extra is not None and extra in self._pending:
-                future = self._pending[extra]
-                if not future.done():
-                    future.set_result(event)
-                continue
             try:
                 outcome = self._on_update(event)
                 if asyncio.iscoroutine(outcome):

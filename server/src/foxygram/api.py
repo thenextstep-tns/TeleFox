@@ -102,7 +102,7 @@ def create_api(service: Service) -> FastAPI:
                FROM chats ORDER BY ai_enabled DESC, last_activity DESC, title"""
         )
 
-    @app.patch("/v1/chats/{chat_id}", **guarded)
+    @app.api_route("/v1/chats/{chat_id}", methods=["PATCH", "POST"], **guarded)
     async def patch_chat(chat_id: int, body: ChatPatch) -> dict[str, bool]:
         if not db.scalar("SELECT 1 FROM chats WHERE chat_id = ?", (chat_id,)):
             raise HTTPException(status_code=404, detail="unknown chat")
@@ -200,7 +200,7 @@ def create_api(service: Service) -> FastAPI:
         case["timeline"] = timeline
         return case
 
-    @app.patch("/v1/cases/{case_id}", **guarded)
+    @app.api_route("/v1/cases/{case_id}", methods=["PATCH", "POST"], **guarded)
     async def patch_case(case_id: int, body: CasePatch) -> dict[str, bool]:
         if body.title is not None and body.title.strip():
             db.execute("UPDATE cases SET title = ? WHERE id = ?", (body.title.strip()[:60], case_id))
