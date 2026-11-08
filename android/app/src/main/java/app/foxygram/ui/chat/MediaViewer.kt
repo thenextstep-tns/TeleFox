@@ -79,7 +79,7 @@ private fun ZoomablePhoto(body: MessageBody.Photo) {
 private fun VideoPlayer(telegram: Telegram, fileId: Int, loop: Boolean) {
     val context = LocalContext.current
     val player = remember(fileId) {
-        buildTelegramPlayer(context, telegram).apply {
+        buildTelegramPlayer(context).apply {
             repeatMode = if (loop) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
             playTelegramFile(telegram, fileId)
         }

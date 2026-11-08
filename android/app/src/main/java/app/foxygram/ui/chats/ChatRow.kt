@@ -75,24 +75,26 @@ fun ChatRow(chat: ChatItem, onClick: () -> Unit, onLongClick: () -> Unit, modifi
 private fun TitleLine(chat: ChatItem) {
     val colors = Foxy.colors
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            chat.title,
-            color = colors.text,
-            fontSize = 16.5.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false),
-        )
-        if (chat.verified) {
-            Spacer(Modifier.width(3.dp))
-            Icon(Icons.Filled.Verified, null, tint = colors.accent, modifier = Modifier.size(15.dp))
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                chat.title,
+                color = colors.text,
+                fontSize = 16.5.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            if (chat.verified) {
+                Spacer(Modifier.width(3.dp))
+                Icon(Icons.Filled.Verified, null, tint = colors.accent, modifier = Modifier.size(15.dp))
+            }
+            if (chat.muted) {
+                Spacer(Modifier.width(3.dp))
+                Icon(Icons.AutoMirrored.Filled.VolumeOff, null, tint = colors.textSecondary, modifier = Modifier.size(14.dp))
+            }
         }
-        if (chat.muted) {
-            Spacer(Modifier.width(3.dp))
-            Icon(Icons.AutoMirrored.Filled.VolumeOff, null, tint = colors.textSecondary, modifier = Modifier.size(14.dp))
-        }
-        Spacer(Modifier.weight(0.001f).width(4.dp))
+        Spacer(Modifier.width(6.dp))
         StatusIcon(chat.status)
         Spacer(Modifier.width(3.dp))
         Text(listTime(chat.date), color = colors.textSecondary, fontSize = 13.sp, maxLines = 1)

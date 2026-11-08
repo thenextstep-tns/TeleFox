@@ -55,7 +55,7 @@ class TdMapper(private val store: TdStore, private val files: TdFiles) {
             else -> null
         }
         val status = when {
-            last == null || !last.isOutgoing || kind == ChatKind.Channel && false -> SendState.None
+            last == null || !last.isOutgoing -> SendState.None
             else -> sendState(last, chat)
         }
         return ChatItem(

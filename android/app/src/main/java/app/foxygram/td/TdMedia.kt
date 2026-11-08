@@ -103,7 +103,7 @@ class TdDataSource(private val telegram: Telegram) : BaseDataSource(true) {
 }
 
 @OptIn(UnstableApi::class)
-fun buildTelegramPlayer(context: Context, telegram: Telegram): ExoPlayer = ExoPlayer.Builder(context).build().also {
+fun buildTelegramPlayer(context: Context): ExoPlayer = ExoPlayer.Builder(context).build().also {
     it.setHandleAudioBecomingNoisy(true)
     it.repeatMode = Player.REPEAT_MODE_OFF
 }
@@ -126,7 +126,7 @@ class TdAudioController(private val context: Context, private val telegram: Tele
     private var ticker: Job? = null
     private var player: ExoPlayer? = null
 
-    private fun player(): ExoPlayer = player ?: buildTelegramPlayer(context, telegram).also { created ->
+    private fun player(): ExoPlayer = player ?: buildTelegramPlayer(context).also { created ->
         player = created
         created.addListener(object : Player.Listener {
             override fun onEvents(p: Player, events: Player.Events) {

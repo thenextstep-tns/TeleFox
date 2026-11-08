@@ -20,7 +20,6 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -302,13 +301,10 @@ class Telegram private constructor(private val app: Application, val settings: S
         }
     }
 
-    suspend fun waitForMessageProcessing() = delay(ALERT_SETTLE_MS)
-
     companion object {
         private const val CHAT_PAGE = 100
         private const val SEARCH_LIMIT = 50
         private const val LIST_DEBOUNCE_MS = 50L
-        private const val ALERT_SETTLE_MS = 300L
 
         @Volatile private var instance: Telegram? = null
 

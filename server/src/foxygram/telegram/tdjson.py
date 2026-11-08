@@ -103,7 +103,10 @@ class TdClient:
         while not self._stop.is_set():
             raw = receive(1.0)
             if raw and self._loop:
-                self._loop.call_soon_threadsafe(self._route, json.loads(raw))
+                try:
+                    self._loop.call_soon_threadsafe(self._route, json.loads(raw))
+                except RuntimeError:  # the loop closed while TDLib was still delivering its last events
+                    return
 
     def _route(self, event: dict[str, Any]) -> None:
         """Replies skip the queue: an update handler may be awaiting one, and it holds the queue."""
