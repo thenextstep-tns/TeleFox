@@ -130,6 +130,10 @@ class Config:
         return self.home / "logs"
 
     @property
+    def cloudflared_config(self) -> Path:
+        return self.home / "cloudflared.yml"
+
+    @property
     def sandbox_dir(self) -> Path:
         """Empty folder Claude runs in, so no project files or settings are picked up."""
         return self.home / "claude-sandbox"

@@ -37,7 +37,7 @@ class Service:
         self.db = Database(config.db_path)
         self.session = session or TelegramSession(config)
         self.engine = engine or ClaudeEngine(config.claude, self.db, config.sandbox_dir)
-        self.tunnel = Tunnel(config.tunnel, config.server)
+        self.tunnel = Tunnel(config.tunnel, config.server, config.cloudflared_config)
         self.stop = asyncio.Event()
         self.phone_seen_at = 0
         self._tasks: list[asyncio.Task[Any]] = []

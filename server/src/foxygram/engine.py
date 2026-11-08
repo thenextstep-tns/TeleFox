@@ -19,6 +19,7 @@ from typing import Any
 
 from .config import ClaudeConfig
 from .db import Database, now
+from .process import NO_WINDOW
 
 log = logging.getLogger("engine")
 
@@ -154,6 +155,7 @@ class ClaudeEngine:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            creationflags=NO_WINDOW,
         )
         try:
             stdout, stderr = await asyncio.wait_for(
