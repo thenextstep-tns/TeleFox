@@ -27,7 +27,8 @@ jobs:
         run: |
           git init td
           git -C td remote add origin https://github.com/tdlib/td.git
-          git -C td fetch --depth 1 origin "$(cat tdlib.version)"
+          git -C td fetch --depth 1 origin "$(tr -d '
+' < tdlib.version)"
           git -C td checkout FETCH_HEAD
       - name: Install toolchain
         run: |
@@ -59,7 +60,8 @@ jobs:
         run: |
           git init td
           git -C td remote add origin https://github.com/tdlib/td.git
-          git -C td fetch --depth 1 origin "$(cat tdlib.version)"
+          git -C td fetch --depth 1 origin "$(tr -d '
+' < tdlib.version)"
           git -C td checkout FETCH_HEAD
       - name: Install dependencies
         run: C:\vcpkg\vcpkg.exe install gperf:x64-windows-static openssl:x64-windows-static zlib:x64-windows-static
@@ -95,7 +97,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # A prerelease never counts as "latest", which TeleFox's updater reads.
-          SHA="$(cat tdlib.version)"
+          SHA="$(tr -d '
+' < tdlib.version)"
           TAG="tdlib-${SHA:0:12}"
           mv tdlib.zip tdlib-android.zip
           sha256sum tdlib-android.zip tdjson-windows-x64.zip > SHA256SUMS
