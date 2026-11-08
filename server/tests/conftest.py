@@ -30,21 +30,6 @@ class FakeClient:
         return {"@type": "ok", "messages": []}
 
 
-class FakePusher:
-    enabled = True
-    last_error = ""
-
-    def __init__(self):
-        self.sent = []
-
-    async def send(self, payload, ttl_seconds=300):
-        self.sent.append(payload)
-        return 1
-
-    async def close(self):
-        pass
-
-
 @pytest.fixture
 def config(tmp_path: Path):
     cfg = load_config(tmp_path)
@@ -56,16 +41,14 @@ async def service(config):
     from foxygram.telegram.session import TelegramSession
 
     session = TelegramSession(config, client_factory=FakeClient)
-    svc = Service(config, session=session, pusher=FakePusher())
+    svc = Service(config, session=session)
     yield svc
     svc.stop.set()
     svc.db.close()
 
 
-def add_chat(service, chat_id=100, title="Логистика", kind="group", ai=True, muted=False):
-    info = ChatInfo(chat_id=chat_id, title=title, kind=kind,
-                    notification_settings={"use_default_mute_for": False, "mute_for": 86400 if muted else 0,
-                                           "use_default_disable_mention_notifications": True})
+def add_chat(service, chat_id=100, title="Логистика", kind="group", ai=True):
+    info = ChatInfo(chat_id=chat_id, title=title, kind=kind)
     service.session.chats[chat_id] = info
     service.on_chat_changed(info)
     if ai:

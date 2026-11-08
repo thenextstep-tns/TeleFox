@@ -68,13 +68,13 @@ async def test_wrong_token_rejected(service):
 
 async def test_health(api):
     body = (await api.get("/v1/health")).json()
-    assert body["claude"]["state"] == "ok" and body["push"] is True
+    assert body["claude"]["state"] == "ok"
 
 
-async def test_device_registration_is_idempotent(api, service):
-    for _ in range(2):
-        assert (await api.post("/v1/devices", json={"token": "abc", "name": "Realme"})).status_code == 200
-    assert service.db.scalar("SELECT COUNT(*) FROM devices") == 1
+async def test_phone_activity_is_visible(api, service):
+    assert service.phone_seen_at == 0
+    await api.get("/v1/health")
+    assert service.phone_seen_at > 0
 
 
 async def test_selecting_a_chat(api, service):

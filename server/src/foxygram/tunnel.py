@@ -5,7 +5,6 @@ import asyncio
 import logging
 import re
 import shutil
-from typing import Awaitable, Callable
 
 from .config import ServerConfig, TunnelConfig
 
@@ -16,10 +15,9 @@ RESTART_SECONDS = 15
 
 
 class Tunnel:
-    def __init__(self, tunnel: TunnelConfig, server: ServerConfig, on_url: Callable[[str], Awaitable[None]]):
+    def __init__(self, tunnel: TunnelConfig, server: ServerConfig):
         self.config = tunnel
         self.server = server
-        self.on_url = on_url
         self.url = server.public_url
         self._process: asyncio.subprocess.Process | None = None
 
@@ -42,7 +40,6 @@ class Tunnel:
                 if match and match.group(0).decode() != self.url:
                     self.url = match.group(0).decode()
                     log.info("tunnel address: %s", self.url)
-                    await self.on_url(self.url)
             await self._process.wait()
             log.warning("tunnel exited; restarting")
             try:

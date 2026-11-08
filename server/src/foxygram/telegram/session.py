@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from .. import __version__
@@ -14,20 +14,11 @@ from .tdjson import TdClient, TdError
 
 log = logging.getLogger("telegram")
 
-_SCOPE_BY_KIND = {
-    "private": "notificationSettingsScopePrivateChats",
-    "group": "notificationSettingsScopeGroupChats",
-    "channel": "notificationSettingsScopeChannelChats",
-}
-
-
 @dataclass
 class ChatInfo:
     chat_id: int
     title: str = ""
     kind: str = "private"
-    notification_settings: dict[str, Any] = field(default_factory=dict)
-    unread_count: int = 0
 
 
 @dataclass
@@ -40,20 +31,6 @@ class AuthStatus:
     connection: str = ""
 
 
-def is_muted(info: ChatInfo, scopes: dict[str, dict[str, Any]]) -> bool:
-    settings = info.notification_settings
-    if settings and not settings.get("use_default_mute_for", True):
-        return int(settings.get("mute_for", 0)) > 0
-    return int(scopes.get(_SCOPE_BY_KIND[info.kind], {}).get("mute_for", 0)) > 0
-
-
-def mentions_disabled(info: ChatInfo, scopes: dict[str, dict[str, Any]]) -> bool:
-    settings = info.notification_settings
-    if settings and not settings.get("use_default_disable_mention_notifications", True):
-        return bool(settings.get("disable_mention_notifications"))
-    return bool(scopes.get(_SCOPE_BY_KIND[info.kind], {}).get("disable_mention_notifications"))
-
-
 class TelegramSession:
     """Stays offline and never views messages, so your read state and phone alerts are untouched."""
 
@@ -63,13 +40,11 @@ class TelegramSession:
         self.auth = AuthStatus()
         self.chats: dict[int, ChatInfo] = {}
         self.users: dict[int, str] = {}
-        self.scopes: dict[str, dict[str, Any]] = {}
         self.my_id = 0
         self.ready = asyncio.Event()
         self.on_message: Callable[[dict[str, Any]], Awaitable[None]] | None = None
         self.on_message_edited: Callable[[int, int, dict[str, Any]], Awaitable[None]] | None = None
         self.on_messages_deleted: Callable[[int, list[int]], Awaitable[None]] | None = None
-        self.on_read: Callable[[int, int], Awaitable[None]] | None = None
         self.on_chat_changed: Callable[[ChatInfo], None] | None = None
         self.started_at = time.time()
 
@@ -151,8 +126,6 @@ class TelegramSession:
                     chat_id=chat["id"],
                     title=chat.get("title", ""),
                     kind=msg.chat_kind(chat.get("type", {})),
-                    notification_settings=chat.get("notification_settings", {}),
-                    unread_count=chat.get("unread_count", 0),
                 )
                 self.chats[info.chat_id] = info
                 self._changed(info)
@@ -161,12 +134,6 @@ class TelegramSession:
                 if info:
                     info.title = update["title"]
                     self._changed(info)
-            case "updateChatNotificationSettings":
-                info = self.chats.get(update["chat_id"])
-                if info:
-                    info.notification_settings = update["notification_settings"]
-            case "updateScopeNotificationSettings":
-                self.scopes[update["scope"]["@type"]] = update["notification_settings"]
             case "updateUser":
                 user = update["user"]
                 self.users[user["id"]] = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
@@ -182,12 +149,6 @@ class TelegramSession:
             case "updateDeleteMessages":
                 if update.get("is_permanent") and self.on_messages_deleted:
                     await self.on_messages_deleted(update["chat_id"], update["message_ids"])
-            case "updateChatReadInbox":
-                info = self.chats.get(update["chat_id"])
-                if info:
-                    info.unread_count = update.get("unread_count", 0)
-                if self.on_read:
-                    await self.on_read(update["chat_id"], update.get("unread_count", 0))
 
     def _changed(self, info: ChatInfo) -> None:
         if self.on_chat_changed:

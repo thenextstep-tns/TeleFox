@@ -36,7 +36,6 @@ class Parsed:
     kind: str
     text: str
     reply_to: int
-    mention: bool
     pending: bool
 
 
@@ -87,32 +86,6 @@ def content_of(content: dict[str, Any]) -> tuple[str, str]:
     return "other", ""
 
 
-KIND_LABELS = {
-    "photo": "Фото",
-    "video": "Видео",
-    "gif": "GIF",
-    "audio": "Аудио",
-    "document": "Файл",
-    "voice": "Голосовое сообщение",
-    "round_video": "Видеосообщение",
-    "sticker": "Стикер",
-    "poll": "Опрос",
-    "location": "Геопозиция",
-    "contact": "Контакт",
-    "call": "Звонок",
-    "other": "Сообщение",
-}
-
-
-def preview(kind: str, text: str) -> str:
-    if kind == "text":
-        return text
-    if kind == "sticker":
-        return f"{text} Стикер".strip()
-    label = KIND_LABELS.get(kind, "Сообщение")
-    return f"{label}: {text}" if text else label
-
-
 def parse(message: dict[str, Any]) -> Parsed:
     sender = message.get("sender_id", {})
     sender_id = int(sender.get("user_id") or sender.get("chat_id") or 0)
@@ -127,7 +100,6 @@ def parse(message: dict[str, Any]) -> Parsed:
         kind=kind,
         text=text,
         reply_to=int(reply.get("message_id", 0)) if reply.get("@type") == "messageReplyToMessage" else 0,
-        mention=bool(message.get("contains_unread_mention")),
         pending="sending_state" in message and message["sending_state"] is not None,
     )
 

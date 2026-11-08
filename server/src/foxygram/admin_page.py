@@ -122,7 +122,7 @@ async function tick() {
   renderTelegram(s.telegram);
   const ready = s.telegram.state === 'ready';
   $('phone').hidden = !ready; $('chatsBox').hidden = !ready;
-  $('phonePill').textContent = s.devices ? 'подключён' : 'не подключён'; $('phonePill').className = 'pill ' + (s.devices?'ok':'warn');
+  $('phonePill').textContent = s.phone_seen_at ? 'подключён' : 'не подключён'; $('phonePill').className = 'pill ' + (s.phone_seen_at?'ok':'warn');
   if (ready && s.url && s.url !== pairedUrl) { pairedUrl = s.url; $('pairQr').innerHTML = `<img src="/api/qr/pair.svg?${Date.now()}">`; }
   if (ready && !chats.length) refreshChats();
   const c = CLAUDE[s.claude.state] || [s.claude.state,''];

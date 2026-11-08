@@ -9,15 +9,9 @@ from pydantic import BaseModel
 
 from . import __version__
 from .db import now
-from .push import register_device
 from .service import Service
 
 MAX_LIST = 200
-
-
-class DeviceBody(BaseModel):
-    token: str
-    name: str = ""
 
 
 class ChatPatch(BaseModel):
@@ -81,6 +75,7 @@ def create_api(service: Service) -> FastAPI:
         supplied = authorization.removeprefix("Bearer ").strip()
         if not hmac.compare_digest(supplied.encode(), expected.encode()):
             raise HTTPException(status_code=401, detail="invalid token")
+        service.phone_seen_at = now()
 
     guarded = {"dependencies": [Depends(require_token)]}
 
@@ -91,7 +86,6 @@ def create_api(service: Service) -> FastAPI:
             "version": __version__,
             "telegram": service.session.auth.state,
             "connection": service.session.auth.connection,
-            "push": service.pusher.enabled,
             "claude": {
                 "state": engine.state,
                 "detail": engine.detail,
@@ -100,11 +94,6 @@ def create_api(service: Service) -> FastAPI:
             },
             "pending": int(db.scalar("SELECT COUNT(*) FROM bursts WHERE status = 'pending'") or 0),
         }
-
-    @app.post("/v1/devices", **guarded)
-    async def add_device(body: DeviceBody) -> dict[str, bool]:
-        register_device(db, body.token, body.name)
-        return {"ok": True}
 
     @app.get("/v1/chats", **guarded)
     async def chats() -> list[dict[str, Any]]:
