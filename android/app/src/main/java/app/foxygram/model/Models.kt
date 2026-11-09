@@ -59,6 +59,9 @@ data class ChatItem(
 @Immutable
 data class FolderTab(val id: Int, val title: String, val unread: Int = 0)
 
+@Immutable
+data class TopicItem(val id: Int, val title: String, val preview: String, val date: Int, val unread: Int, val mentions: Int, val color: Long)
+
 enum class SpanType { Bold, Italic, Underline, Strike, Spoiler, Code, Pre, Url, TextUrl, Mention, Hashtag, Command, Email, Phone, BlockQuote }
 
 @Immutable

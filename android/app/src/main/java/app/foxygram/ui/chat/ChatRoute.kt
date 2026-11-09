@@ -87,10 +87,10 @@ private class ComposerMode(val messageId: Long, val isEdit: Boolean, val title: 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatRoute(telegram: Telegram, chatId: Long, onBack: () -> Unit, navigate: (Route) -> Unit) {
+fun ChatRoute(telegram: Telegram, chatId: Long, onBack: () -> Unit, navigate: (Route) -> Unit, topicId: Int = 0, topicTitle: String? = null) {
     val context = LocalContext.current
     val colors = Foxy.colors
-    val session = remember(chatId) { ChatSession(telegram, chatId) }
+    val session = remember(chatId, topicId) { ChatSession(telegram, chatId, topicId, topicTitle) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val feed by session.feed.collectAsState()

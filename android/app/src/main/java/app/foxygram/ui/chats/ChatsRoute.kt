@@ -1,5 +1,6 @@
 package app.foxygram.ui.chats
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MarkChatRead
 import androidx.compose.material.icons.filled.MarkChatUnread
 import androidx.compose.material.icons.filled.NotificationsActive
@@ -39,6 +41,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -56,17 +59,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.foxygram.data.ProjectInfo
 import app.foxygram.model.ChatItem
+import app.foxygram.model.FolderTab
 import app.foxygram.td.ChatCommands
 import app.foxygram.td.Telegram
 import app.foxygram.ui.Route
 import app.foxygram.ui.theme.Foxy
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+private const val FOLDER_NAME_MAX = 12
 
 @Composable
 fun ChatsRoute(telegram: Telegram, navigate: (Route) -> Unit) {
@@ -76,6 +85,7 @@ fun ChatsRoute(telegram: Telegram, navigate: (Route) -> Unit) {
     val connection by telegram.connection.collectAsState()
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var sheetChat by remember { mutableStateOf<ChatItem?>(null) }
     var results by remember { mutableStateOf<List<ChatItem>?>(null) }
     val colors = Foxy.colors
@@ -111,7 +121,7 @@ fun ChatsRoute(telegram: Telegram, navigate: (Route) -> Unit) {
             selectedFolder = selected,
             connectionLabel = connection,
             onFolder = telegram::selectFolder,
-            onChat = { navigate(Route.Chat(it.id)) },
+            onChat = { navigate(if (it.isForum) Route.Topics(it.id, it.title) else Route.Chat(it.id)) },
             onChatLongPress = { sheetChat = it },
             onMenu = { scope.launch { drawer.open() } },
             onNearEnd = { scope.launch { telegram.loadMore() } },
@@ -123,6 +133,12 @@ fun ChatsRoute(telegram: Telegram, navigate: (Route) -> Unit) {
                 }
             },
             searchResults = results,
+            onMarkFolderRead = { folder ->
+                scope.launch {
+                    runCatching { telegram.markFolderRead(folder) }
+                        .onFailure { Toast.makeText(context, "Не удалось: ${it.message}", Toast.LENGTH_LONG).show() }
+                }
+            },
         )
     }
     sheetChat?.let { chat -> ChatActionsSheet(telegram, chat) { sheetChat = null } }
@@ -153,6 +169,9 @@ fun ChatActionsSheet(telegram: Telegram, chat: ChatItem, onDismiss: () -> Unit) 
     var selectedProject by remember { mutableStateOf<ProjectInfo?>(null) }
     var serverError by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var folderChoices by remember { mutableStateOf<List<FolderTab>?>(null) }
+    var namingFolder by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     LaunchedEffect(chat.id) {
         archived = runCatching { commands.isArchived(chat.id) }.getOrDefault(false)
@@ -170,6 +189,16 @@ fun ChatActionsSheet(telegram: Telegram, chat: ChatItem, onDismiss: () -> Unit) 
         onDismiss()
     }
 
+    /** Outlives this sheet, so a folder limit or other refusal can still be shown after it closes. */
+    fun actAndReport(block: suspend () -> Unit) {
+        telegram.scope.launch {
+            runCatching { block() }.onFailure { error ->
+                withContext(Dispatchers.Main) { Toast.makeText(context.applicationContext, "Не удалось: ${error.message}", Toast.LENGTH_LONG).show() }
+            }
+        }
+        onDismiss()
+    }
+
     ModalBottomSheet(onDismiss, containerColor = colors.surface) {
         Column(Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(WindowInsets.navigationBars)) {
             Text(chat.title, color = colors.text, fontSize = 17.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
@@ -183,6 +212,12 @@ fun ChatActionsSheet(telegram: Telegram, chat: ChatItem, onDismiss: () -> Unit) 
             }
             SheetRow(if (archived) Icons.Filled.Unarchive else Icons.Filled.Archive, if (archived) "Вернуть из архива" else "В архив") {
                 act { commands.setArchived(chat.id, !archived) }
+            }
+            SheetRow(Icons.Filled.Folder, "Добавить в папку") {
+                scope.launch {
+                    val ids = runCatching { commands.foldersToAdd(chat.id) }.getOrDefault(emptyList())
+                    folderChoices = telegram.folders.value.filter { it.id in ids }
+                }
             }
             SheetRow(if (chat.kind == app.foxygram.model.ChatKind.Private) Icons.Filled.Delete else Icons.AutoMirrored.Filled.ExitToApp, if (chat.kind == app.foxygram.model.ChatKind.Private) "Удалить чат" else "Покинуть", colors.danger) {
                 confirmDelete = true
@@ -231,6 +266,48 @@ fun ChatActionsSheet(telegram: Telegram, chat: ChatItem, onDismiss: () -> Unit) 
                 Spacer(Modifier.height(12.dp))
             }
         }
+    }
+
+    folderChoices?.let { choices ->
+        AlertDialog(
+            onDismissRequest = { folderChoices = null },
+            title = { Text("Добавить в папку") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    choices.forEach { folder ->
+                        Text(
+                            folder.title, color = colors.text, fontSize = 16.sp,
+                            modifier = Modifier.fillMaxWidth().clickable { actAndReport { commands.addToFolder(chat.id, folder.id) } }.padding(vertical = 12.dp),
+                        )
+                    }
+                    Text(
+                        "Новая папка…", color = colors.accent, fontSize = 16.sp,
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            folderChoices = null
+                            namingFolder = true
+                        }.padding(vertical = 12.dp),
+                    )
+                }
+            },
+            confirmButton = { TextButton({ folderChoices = null }) { Text("Отмена") } },
+            containerColor = colors.surface,
+        )
+    }
+
+    if (namingFolder) {
+        var name by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { namingFolder = false },
+            title = { Text("Новая папка") },
+            text = {
+                OutlinedTextField(name, { name = it.replace("\n", "").take(FOLDER_NAME_MAX) }, singleLine = true, placeholder = { Text("Название") })
+            },
+            confirmButton = {
+                TextButton({ actAndReport { commands.createFolder(chat.id, name.trim()) } }, enabled = name.isNotBlank()) { Text("Создать") }
+            },
+            dismissButton = { TextButton({ namingFolder = false }) { Text("Отмена") } },
+            containerColor = colors.surface,
+        )
     }
 
     if (confirmDelete) {

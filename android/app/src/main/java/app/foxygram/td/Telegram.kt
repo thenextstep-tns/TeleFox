@@ -93,6 +93,15 @@ class Telegram private constructor(private val app: Application, val settings: S
 
     @Volatile var appVisible: Boolean = false
 
+    /** The topic open on screen, or 0 when a whole chat is. */
+    @Volatile var visibleTopicId: Int = 0
+
+    /** The group whose list of topics is on screen. */
+    @Volatile var topicsChatId: Long = 0
+
+    private val _topicsTick = MutableStateFlow(0L)
+    val topicsTick: StateFlow<Long> = _topicsTick.asStateFlow()
+
     fun start() {
         if (!started.compareAndSet(false, true)) return
         Client.execute(TdApi.SetLogVerbosityLevel(1))
@@ -167,7 +176,10 @@ class Telegram private constructor(private val app: Application, val settings: S
             is TdApi.UpdateNewMessage -> {
                 store.onUpdate(update)
                 alerts.onNewMessage(update.message)
+                if (update.message.chatId == topicsChatId) _topicsTick.value++
             }
+            is TdApi.UpdateForumTopic -> if (update.chatId == topicsChatId) _topicsTick.value++
+            is TdApi.UpdateForumTopicInfo -> if (update.info.chatId == topicsChatId) _topicsTick.value++
             is TdApi.UpdateChatReadInbox -> {
                 store.onUpdate(update)
                 alerts.onRead(update.chatId, update.unreadCount)
@@ -267,6 +279,28 @@ class Telegram private constructor(private val app: Application, val settings: S
     fun alertFolders(tabs: List<FolderTab>): List<Pair<String, String>> =
         tabs.filter { it.id != FOLDER_ALL && it.id != FOLDER_ARCHIVE }
             .map { listKey(TdApi.ChatListFolder(it.id)) to it.title } + (listKey(TdApi.ChatListArchive()) to "Архив")
+
+    suspend fun markFolderRead(folder: Int) {
+        call(TdApi.ReadChatList(listFor(folder)))
+    }
+
+    /** The chat's title if it is a group with topics, which opens on its list of topics. */
+    suspend fun forumTitle(chatId: Long): String? = withContext(serial) {
+        val chat = store.chat(chatId) ?: return@withContext null
+        val type = chat.type as? TdApi.ChatTypeSupergroup ?: return@withContext null
+        chat.title.takeIf { store.supergroup(type.supergroupId)?.isForum == true }
+    }
+
+    /** Telegram only sends a supergroup's updates reliably while the chat is open. */
+    fun watchTopics(chatId: Long) {
+        topicsChatId = chatId
+        fire(TdApi.OpenChat(chatId))
+    }
+
+    fun unwatchTopics(chatId: Long) {
+        fire(TdApi.CloseChat(chatId))
+        if (topicsChatId == chatId) topicsChatId = 0
+    }
 
     private fun currentList(): TdApi.ChatList = listFor(_selectedFolder.value)
 

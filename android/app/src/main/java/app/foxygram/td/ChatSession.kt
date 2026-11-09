@@ -17,8 +17,16 @@ import java.util.TreeMap
 private const val PAGE_SIZE = 50
 private const val AROUND_UNREAD_NEWER = 30
 
-/** One open conversation. Mutated only on Telegram.serial. */
-class ChatSession(private val telegram: Telegram, val chatId: Long) {
+private class ReadState(val unread: Int, val lastRead: Long, val lastMessageId: Long?)
+
+/** One open conversation, or one topic of it when topicId isn't 0. Mutated only on Telegram.serial. */
+class ChatSession(
+    private val telegram: Telegram,
+    val chatId: Long,
+    private val topicId: Int = 0,
+    private val topicTitle: String? = null,
+) {
+    private val sendTopic: TdApi.MessageTopic? get() = if (topicId == 0) null else TdApi.MessageTopicForum(topicId)
     private val store get() = telegram.store
     private val mapper get() = telegram.mapper
 
@@ -50,6 +58,7 @@ class ChatSession(private val telegram: Telegram, val chatId: Long) {
         telegram.scope.launch(telegram.serial) {
             telegram.activeSession = this@ChatSession
             telegram.visibleChatId = chatId
+            telegram.visibleTopicId = topicId
             telegram.alerts.clearChat(chatId)
             telegram.fire(TdApi.OpenChat(chatId))
             refreshHeader()
@@ -60,17 +69,31 @@ class ChatSession(private val telegram: Telegram, val chatId: Long) {
     fun close() {
         telegram.fire(TdApi.CloseChat(chatId))
         if (telegram.activeSession === this) telegram.activeSession = null
-        if (telegram.visibleChatId == chatId) telegram.visibleChatId = 0
+        if (telegram.visibleChatId == chatId) {
+            telegram.visibleChatId = 0
+            telegram.visibleTopicId = 0
+        }
     }
 
+    private suspend fun readState(): ReadState {
+        if (topicId == 0) {
+            val chat = store.chat(chatId)
+            return ReadState(chat?.unreadCount ?: 0, chat?.lastReadInboxMessageId ?: 0, chat?.lastMessage?.id)
+        }
+        val topic = runCatching { telegram.call(TdApi.GetForumTopic(chatId, topicId)) }.getOrNull()
+        return ReadState(topic?.unreadCount ?: 0, topic?.lastReadInboxMessageId ?: 0, topic?.lastMessage?.id)
+    }
+
+    private fun belongsHere(message: TdApi.Message): Boolean =
+        message.chatId == chatId && (topicId == 0 || (message.topicId as? TdApi.MessageTopicForum)?.forumTopicId == topicId)
+
     private suspend fun initialLoad() {
-        val chat = store.chat(chatId)
-        val hasUnread = (chat?.unreadCount ?: 0) > 0 && (chat?.lastReadInboxMessageId ?: 0) > 0
-        if (chat != null && hasUnread) {
-            val around = fetch(chat.lastReadInboxMessageId, -AROUND_UNREAD_NEWER, PAGE_SIZE)
+        val read = readState()
+        if (read.unread > 0 && read.lastRead > 0) {
+            val around = fetch(read.lastRead, -AROUND_UNREAD_NEWER, PAGE_SIZE)
             add(around)
-            firstUnreadId = messages.keys.filter { it > chat.lastReadInboxMessageId }.minOrNull()
-            reachedNewest = messages.firstKey() == chat.lastMessage?.id
+            firstUnreadId = messages.keys.filter { it > read.lastRead }.minOrNull()
+            reachedNewest = messages.isEmpty() || messages.firstKey() == read.lastMessageId
         } else {
             add(fetch(0, 0, PAGE_SIZE))
             reachedNewest = true
@@ -93,7 +116,11 @@ class ChatSession(private val telegram: Telegram, val chatId: Long) {
         var currentOffset = offset
         repeat(MAX_FETCH_ROUNDS) {
             val batch = runCatching {
-                telegram.call(TdApi.GetChatHistory(chatId, cursor, currentOffset, limit, false)).messages
+                if (topicId == 0) {
+                    telegram.call(TdApi.GetChatHistory(chatId, cursor, currentOffset, limit, false)).messages
+                } else {
+                    telegram.call(TdApi.GetForumTopicHistory(chatId, topicId, cursor, currentOffset, limit)).messages
+                }
             }.getOrNull().orEmpty().filterNotNull()
             val fresh = batch.filter { it.id !in result }
             if (fresh.isEmpty()) return result.values.toList()
@@ -150,7 +177,8 @@ class ChatSession(private val telegram: Telegram, val chatId: Long) {
             val unseen = ids.filter { it !in pendingViews && it > 0 }
             if (unseen.isEmpty()) return@launch
             pendingViews += unseen
-            telegram.fire(TdApi.ViewMessages(chatId, unseen.toLongArray(), TdApi.MessageSourceChatHistory(), true))
+            val source: TdApi.MessageSource = if (topicId == 0) TdApi.MessageSourceChatHistory() else TdApi.MessageSourceForumTopicHistory()
+            telegram.fire(TdApi.ViewMessages(chatId, unseen.toLongArray(), source, true))
         }
     }
 
@@ -160,17 +188,17 @@ class ChatSession(private val telegram: Telegram, val chatId: Long) {
 
     fun onUpdate(update: TdApi.Object) {
         when (update) {
-            is TdApi.UpdateNewMessage -> if (update.message.chatId == chatId && reachedNewest) {
+            is TdApi.UpdateNewMessage -> if (belongsHere(update.message) && reachedNewest) {
                 messages[update.message.id] = update.message
                 rebuild()
             }
-            is TdApi.UpdateMessageSendSucceeded -> if (update.message.chatId == chatId) {
+            is TdApi.UpdateMessageSendSucceeded -> if (belongsHere(update.message)) {
                 messages.remove(update.oldMessageId)
                 invalidate(update.oldMessageId)
                 messages[update.message.id] = update.message
                 rebuild()
             }
-            is TdApi.UpdateMessageSendFailed -> if (update.message.chatId == chatId) {
+            is TdApi.UpdateMessageSendFailed -> if (belongsHere(update.message)) {
                 messages.remove(update.oldMessageId)
                 invalidate(update.oldMessageId)
                 messages[update.message.id] = update.message
@@ -265,7 +293,11 @@ class ChatSession(private val telegram: Telegram, val chatId: Long) {
     private fun refreshHeader() {
         val chat = store.chat(chatId) ?: return
         val item = mapper.toChatItem(chat, Telegram.listKey(TdApi.ChatListMain()), telegram.labels.value[chatId])
-        _header.value = ChatHeaderState(item, item.typing ?: subtitle(chat, item.kind))
+        _header.value = if (topicTitle != null) {
+            ChatHeaderState(item.copy(title = topicTitle), item.title)
+        } else {
+            ChatHeaderState(item, item.typing ?: subtitle(chat, item.kind))
+        }
     }
 
     private fun subtitle(chat: TdApi.Chat, kind: ChatKind): String = when (val type = chat.type) {
@@ -295,7 +327,7 @@ class ChatSession(private val telegram: Telegram, val chatId: Long) {
     }
 
     suspend fun sendText(text: String, replyTo: Long?) {
-        telegram.call(TdApi.SendMessage(chatId, null, replyTarget(replyTo), null, null,
+        telegram.call(TdApi.SendMessage(chatId, sendTopic, replyTarget(replyTo), null, null,
             TdApi.InputMessageText(TdApi.FormattedText(text, emptyArray()), null, true)))
     }
 
@@ -305,7 +337,7 @@ class ChatSession(private val telegram: Telegram, val chatId: Long) {
     }
 
     suspend fun sendContent(content: TdApi.InputMessageContent, replyTo: Long?) {
-        telegram.call(TdApi.SendMessage(chatId, null, replyTarget(replyTo), null, null, content))
+        telegram.call(TdApi.SendMessage(chatId, sendTopic, replyTarget(replyTo), null, null, content))
     }
 
     private fun replyTarget(replyTo: Long?): TdApi.InputMessageReplyTo? =
@@ -332,11 +364,16 @@ class ChatSession(private val telegram: Telegram, val chatId: Long) {
         val draft = text.takeIf { it.isNotBlank() }?.let {
             TdApi.DraftMessage(null, 0, TdApi.DraftMessageContentText(TdApi.FormattedText(it, emptyArray()), null), 0, null)
         }
-        runCatching { telegram.call(TdApi.SetChatDraftMessage(chatId, null, draft)) }
+        runCatching { telegram.call(TdApi.SetChatDraftMessage(chatId, sendTopic, draft)) }
     }
 
     suspend fun initialDraft(): String = withContext(telegram.serial) {
-        (store.chat(chatId)?.draftMessage?.content as? TdApi.DraftMessageContentText)?.text?.text.orEmpty()
+        val draft = if (topicId == 0) {
+            store.chat(chatId)?.draftMessage
+        } else {
+            runCatching { telegram.call(TdApi.GetForumTopic(chatId, topicId)).draftMessage }.getOrNull()
+        }
+        (draft?.content as? TdApi.DraftMessageContentText)?.text?.text.orEmpty()
     }
 
     private companion object {

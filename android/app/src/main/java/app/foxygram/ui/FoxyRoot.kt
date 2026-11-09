@@ -34,6 +34,7 @@ import app.foxygram.ui.chat.ChatRoute
 import app.foxygram.ui.chat.LocalAudio
 import app.foxygram.ui.chat.MediaViewer
 import app.foxygram.ui.chats.ChatsRoute
+import app.foxygram.ui.chats.TopicsRoute
 import app.foxygram.ui.common.LocalFiles
 import app.foxygram.ui.settings.AiChatsScreen
 import app.foxygram.ui.settings.SettingsScreen
@@ -43,7 +44,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 
 sealed interface Route {
     data object Chats : Route
-    data class Chat(val id: Long) : Route
+    data class Chat(val id: Long, val topicId: Int = 0, val topicTitle: String? = null) : Route
+    data class Topics(val id: Long, val title: String) : Route
     data object Cases : Route
     data class CaseDetail(val id: Long) : Route
     data object Settings : Route
@@ -102,8 +104,10 @@ private fun MainNavigation(telegram: Telegram, openChat: MutableStateFlow<Long?>
     }
     val pending by openChat.collectAsState()
     LaunchedEffect(pending) {
-        pending?.let {
-            if (stack.lastOrNull() != Route.Chat(it)) stack.add(Route.Chat(it))
+        pending?.let { id ->
+            val forumTitle = telegram.forumTitle(id)
+            val route: Route = if (forumTitle != null) Route.Topics(id, forumTitle) else Route.Chat(id)
+            if (stack.lastOrNull() != route) stack.add(route)
             openChat.value = null
         }
     }
@@ -114,7 +118,8 @@ private fun MainNavigation(telegram: Telegram, openChat: MutableStateFlow<Long?>
         ChatsRoute(telegram, navigate)
         when (val top = stack.last()) {
             Route.Chats -> Unit
-            is Route.Chat -> androidx.compose.runtime.key(top.id) { ChatRoute(telegram, top.id, back, navigate) }
+            is Route.Chat -> androidx.compose.runtime.key(top.id, top.topicId) { ChatRoute(telegram, top.id, back, navigate, top.topicId, top.topicTitle) }
+            is Route.Topics -> androidx.compose.runtime.key(top.id) { TopicsRoute(telegram, top.id, top.title, back, navigate) }
             Route.Cases -> CasesScreen(telegram, back, navigate)
             is Route.CaseDetail -> CaseDetailScreen(telegram, top.id, back, navigate)
             Route.Settings -> SettingsScreen(telegram, back)

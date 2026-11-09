@@ -105,7 +105,7 @@ become the repository's `latest`, and `update/AppUpdater.kt` picks releases by t
 ## Not built
 
 Native calls (they need Telegram's VoIP stack), voice transcription, local embeddings,
-digests, reply drafts, forum topic view, GIF autoplay, WebM stickers, and update checks on
+digests, reply drafts, GIF autoplay, WebM stickers, and update checks on
 launch (button only).
 
 ## Building

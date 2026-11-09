@@ -59,7 +59,8 @@ class Alerts(private val app: Application, private val telegram: Telegram) {
             muted = store.isMuted(chat),
             mentionsMe = message.containsUnreadMention,
             mentionAlertsOff = store.mentionsDisabled(chat),
-            chatOnScreen = telegram.appVisible && telegram.visibleChatId == message.chatId,
+            chatOnScreen = telegram.appVisible && telegram.visibleChatId == message.chatId &&
+                (telegram.visibleTopicId == 0 || (message.topicId as? TdApi.MessageTopicForum)?.forumTopicId == telegram.visibleTopicId),
         )
         if (!shouldAlert(facts)) return
         // Keep the CPU awake just long enough to post it and start the sound.

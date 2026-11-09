@@ -1,7 +1,8 @@
 package app.foxygram.ui.chats
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -72,6 +75,7 @@ fun ChatListScreen(
     onSearch: (String) -> Unit,
     searchResults: List<ChatItem>?,
     modifier: Modifier = Modifier,
+    onMarkFolderRead: (Int) -> Unit = {},
 ) {
     val colors = Foxy.colors
     var searching by remember { mutableStateOf(false) }
@@ -84,7 +88,7 @@ fun ChatListScreen(
                 }
             } else {
                 TopBar(connectionLabel, onMenu) { searching = true }
-                if (folders.size > 1) FolderBar(folders, selectedFolder, onFolder)
+                if (folders.size > 1) FolderBar(folders, selectedFolder, onFolder, onMarkFolderRead)
             }
         }
         val list = if (searching && searchResults != null) searchResults else chats
@@ -155,16 +159,27 @@ private fun SearchBar(onQuery: (String) -> Unit, onClose: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun FolderBar(folders: List<FolderTab>, selected: Int, onFolder: (Int) -> Unit) {
+private fun FolderBar(folders: List<FolderTab>, selected: Int, onFolder: (Int) -> Unit, onMarkRead: (Int) -> Unit) {
     val colors = Foxy.colors
     LazyRow(Modifier.fillMaxWidth().height(44.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
         items(folders, key = { it.id }) { folder ->
             val active = folder.id == selected
+            var menuOpen by remember { mutableStateOf(false) }
             Box(
-                Modifier.height(44.dp).clickable { onFolder(folder.id) }.padding(horizontal = 12.dp),
+                Modifier.height(44.dp).combinedClickable(onClick = { onFolder(folder.id) }, onLongClick = { menuOpen = true }).padding(horizontal = 12.dp),
                 contentAlignment = Alignment.Center,
             ) {
+                DropdownMenu(menuOpen, { menuOpen = false }, Modifier.background(colors.surface)) {
+                    DropdownMenuItem(
+                        text = { Text("Прочитать всё", color = colors.text) },
+                        onClick = {
+                            menuOpen = false
+                            onMarkRead(folder.id)
+                        },
+                    )
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         folder.title,
