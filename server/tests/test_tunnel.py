@@ -1,4 +1,4 @@
-from foxygram.config import ServerConfig, TunnelConfig
+from foxygram.config import ServerConfig, TunnelConfig, ensure_config, load_config
 from foxygram.tunnel import Tunnel
 
 
@@ -51,6 +51,21 @@ def test_named_tunnel_publishes_only_the_phone_api(tmp_path):
     assert "hostname: tlg.example.com\n" in text
     assert "service: http://127.0.0.1:8787\n" in text
     assert text.endswith("- service: http_status:404\n")
+
+
+def write_credentials_setting(home, value):
+    path = ensure_config(home)
+    path.write_text(path.read_text(encoding="utf-8").replace('credentials_file = ""', f'credentials_file = "{value}"'), encoding="utf-8")
+
+
+def test_relative_credentials_file_follows_the_data_folder(tmp_path):
+    write_credentials_setting(tmp_path, "tunnel.json")
+    assert load_config(tmp_path).tunnel.credentials_file == (tmp_path / "tunnel.json").as_posix()
+
+
+def test_absolute_credentials_file_is_left_alone(tmp_path):
+    write_credentials_setting(tmp_path, "C:/elsewhere/tunnel.json")
+    assert load_config(tmp_path).tunnel.credentials_file == "C:/elsewhere/tunnel.json"
 
 
 def test_named_tunnel_without_its_settings_does_not_start(tmp_path):

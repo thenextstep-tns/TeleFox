@@ -5,7 +5,7 @@ import json
 import os
 import secrets
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 DEFAULT_CONFIG = """\
@@ -181,6 +181,14 @@ def ensure_config(home: Path, env_file: Path | None = None) -> Path:
     return path
 
 
+def _tunnel_settings(raw: dict, home: Path) -> TunnelConfig:
+    """A relative credentials file lives in the data folder, so the folder can move between computers."""
+    tunnel = TunnelConfig(**raw)
+    if tunnel.credentials_file and not Path(tunnel.credentials_file).is_absolute():
+        return replace(tunnel, credentials_file=(home / tunnel.credentials_file).as_posix())
+    return tunnel
+
+
 def load_config(home: Path | None = None, env_file: Path | None = None) -> Config:
     home = home or default_home()
     path = ensure_config(home, env_file)
@@ -192,7 +200,7 @@ def load_config(home: Path | None = None, env_file: Path | None = None) -> Confi
         secrets=_load_secrets(home),
         telegram=TelegramConfig(**data.get("telegram", {})),
         server=ServerConfig(**data.get("server", {})),
-        tunnel=TunnelConfig(**data.get("tunnel", {})),
+        tunnel=_tunnel_settings(data.get("tunnel", {}), home),
         claude=ClaudeConfig(**data.get("claude", {})),
         bursts=BurstConfig(**data.get("bursts", {})),
         cases=CaseConfig(**data.get("cases", {})),
