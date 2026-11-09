@@ -1,6 +1,7 @@
 """The control page. Bound to 127.0.0.1 on a port the tunnel never reaches."""
 from __future__ import annotations
 
+import io
 from typing import Any
 
 import segno
@@ -33,9 +34,10 @@ class ToggleBody(BaseModel):
 
 
 def _svg(content: str) -> Response:
-    qr = segno.make(content, error="m")
-    return Response(qr.svg_inline(scale=5, border=2, dark="#000000", light="#ffffff"), media_type="image/svg+xml",
-                    headers={"Cache-Control": "no-store"})
+    """Standalone SVG: the page loads it through <img>, which needs the namespace svg_inline() omits."""
+    buffer = io.BytesIO()
+    segno.make(content, error="m").save(buffer, kind="svg", scale=5, border=2, dark="#000000", light="#ffffff")
+    return Response(buffer.getvalue(), media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
 
 
 def create_admin(service: Service) -> FastAPI:

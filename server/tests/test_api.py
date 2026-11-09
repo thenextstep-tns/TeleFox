@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import httpx
 import pytest
 
@@ -165,6 +167,14 @@ async def test_review_and_confirm(api, service):
 
 async def test_admin_page_loads(admin):
     assert "FoxyGram" in (await admin.get("/")).text
+
+
+async def test_pairing_qr_is_a_standalone_image(admin, service):
+    service.config = replace(service.config, server=replace(service.config.server, public_url="https://x.example"))
+    response = await admin.get("/api/qr/pair.svg")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+    assert 'xmlns="http://www.w3.org/2000/svg"' in response.text
 
 
 async def test_admin_rejects_foreign_host(service):
