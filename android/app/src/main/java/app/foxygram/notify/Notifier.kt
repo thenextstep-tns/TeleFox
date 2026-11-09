@@ -11,6 +11,7 @@ import android.content.Intent
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.MediaPlayer
+import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
 import app.foxygram.MainActivity
@@ -52,7 +53,7 @@ class Notifier(private val context: Context) {
     private fun notificationId(chatId: Long): Int = (chatId xor (chatId ushr 32)).toInt().let { if (it == SUMMARY_ID) 2 else it }
 
     @Synchronized
-    fun post(chatId: Long, messageId: Long, title: String, sender: String, text: String, isGroup: Boolean, date: Int) {
+    fun post(chatId: Long, messageId: Long, title: String, sender: String, text: String, isGroup: Boolean, date: Int, sound: String?) {
         val history = lines.getOrPut(chatId) { ArrayList() }
         if (history.any { it.id == messageId }) return
         history += Line(messageId, sender, text, date)
@@ -84,7 +85,7 @@ class Notifier(private val context: Context) {
             .build()
         manager.notify(id, notification)
         postSummary()
-        playSound()
+        playSound(sound)
     }
 
     private fun postSummary() {
@@ -122,7 +123,18 @@ class Notifier(private val context: Context) {
         if (lines.isEmpty()) manager.cancel(SUMMARY_ID)
     }
 
-    private fun playSound() {
+    /** The folder's own sound if it still plays, otherwise the app's. */
+    private fun createPlayer(sound: String?, attributes: AudioAttributes, session: Int): MediaPlayer? {
+        if (sound != null) {
+            val custom = runCatching { MediaPlayer.create(context, Uri.parse(sound), null, attributes, session) }
+                .onFailure { Log.w(TAG, "folder sound failed", it) }
+                .getOrNull()
+            if (custom != null) return custom
+        }
+        return MediaPlayer.create(context, R.raw.message, attributes, session)
+    }
+
+    private fun playSound(sound: String?) {
         val now = SystemClock.elapsedRealtime()
         if (now - lastSoundAt < MIN_SOUND_GAP_MS) return
         val audio = context.getSystemService(AudioManager::class.java)
@@ -135,7 +147,7 @@ class Notifier(private val context: Context) {
                     .setUsage(AudioAttributes.USAGE_NOTIFICATION)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                     .build()
-                val player = MediaPlayer.create(context, R.raw.message, attributes, audio.generateAudioSessionId())
+                val player = createPlayer(sound, attributes, audio.generateAudioSessionId())
                 player?.setOnCompletionListener(MediaPlayer::release)
                 player?.start()
                 lastSoundAt = now

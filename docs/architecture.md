@@ -43,6 +43,10 @@ measured on the phone.
 The app plays the alert sound itself and posts to a silent channel, because some vendors
 mute third-party channel sounds.
 
+Each folder, and the archive, can alert on everything, on mentions only or not at all, with
+its own sound. A chat in several folders follows the loudest setting. The archive is off by
+default.
+
 ## Server
 
 Python 3.12, FastAPI and SQLite (WAL, FTS5). It ships as a PyInstaller zip and starts from

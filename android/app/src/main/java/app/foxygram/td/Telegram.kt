@@ -1,6 +1,7 @@
 package app.foxygram.td
 
 import android.app.Application
+import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -157,6 +158,7 @@ class Telegram private constructor(private val app: Application, val settings: S
             is TdApi.UpdateChatFolders -> {
                 store.folders = update.chatFolders.toList()
                 markListDirty()
+                if (_auth.value == AuthState.Ready) loadSideLists()
             }
             is TdApi.UpdateUnreadChatCount -> {
                 store.unreadByList[listKey(update.chatList)] = update.unreadUnmutedCount
@@ -190,9 +192,13 @@ class Telegram private constructor(private val app: Application, val settings: S
                 fire(TdApi.SetOption("online", TdApi.OptionValueBoolean(appVisible)))
                 fire(TdApi.SetOption("use_storage_optimizer", TdApi.OptionValueBoolean(true)))
                 scope.launch { loadMore(force = true) }
+                loadSideLists()
                 refreshLabels()
             }
-            is TdApi.AuthorizationStateClosed -> _auth.value = AuthState.Closed
+            is TdApi.AuthorizationStateClosed -> {
+                _auth.value = AuthState.Closed
+                relaunch()
+            }
             is TdApi.AuthorizationStateLoggingOut, is TdApi.AuthorizationStateClosing -> Unit
             else -> _auth.value = AuthState.Unsupported(state.javaClass.simpleName)
         }
@@ -234,6 +240,33 @@ class Telegram private constructor(private val app: Application, val settings: S
     suspend fun logOut() {
         call(TdApi.LogOut())
     }
+
+    /**
+     * A TDLib client can't be reused once closed, and the background service keeps this process
+     * alive, so only a new process gets back to the login screen. The gap stops a restart loop.
+     */
+    private fun relaunch() {
+        val now = System.currentTimeMillis()
+        if (now - settings.lastRelaunch < MIN_RELAUNCH_GAP_MS) return
+        settings.lastRelaunch = now
+        if (appVisible) {
+            app.packageManager.getLaunchIntentForPackage(app.packageName)?.component?.let { main ->
+                app.startActivity(Intent.makeRestartActivityTask(main))
+            }
+        }
+        Runtime.getRuntime().exit(0)
+    }
+
+    /** The archive tab and per-folder alerts need these lists even if they have never been opened. */
+    private fun loadSideLists() {
+        val lists = listOf<TdApi.ChatList>(TdApi.ChatListArchive()) + store.folders.map { TdApi.ChatListFolder(it.id) }
+        scope.launch { lists.forEach { list -> runCatching { call(TdApi.LoadChats(list, SIDE_LIST_PAGE)) } } }
+    }
+
+    /** The lists that can have their own alert settings, as key and title. */
+    fun alertFolders(tabs: List<FolderTab>): List<Pair<String, String>> =
+        tabs.filter { it.id != FOLDER_ALL && it.id != FOLDER_ARCHIVE }
+            .map { listKey(TdApi.ChatListFolder(it.id)) to it.title } + (listKey(TdApi.ChatListArchive()) to "Архив")
 
     private fun currentList(): TdApi.ChatList = listFor(_selectedFolder.value)
 
@@ -306,6 +339,8 @@ class Telegram private constructor(private val app: Application, val settings: S
 
     companion object {
         private const val CHAT_PAGE = 100
+        private const val SIDE_LIST_PAGE = 20
+        private const val MIN_RELAUNCH_GAP_MS = 30_000L
         private const val SEARCH_LIMIT = 50
         private const val LIST_DEBOUNCE_MS = 50L
 

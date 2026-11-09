@@ -2,6 +2,7 @@ package app.foxygram.data
 
 import android.content.Context
 import android.util.Base64
+import app.foxygram.notify.AlertMode
 import app.foxygram.ui.theme.ThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -47,6 +48,28 @@ class Settings(context: Context) {
         get() = prefs.getLong(KEY_LAST_UPDATE_CHECK, 0)
         set(value) = prefs.edit().putLong(KEY_LAST_UPDATE_CHECK, value).apply()
 
+    /** Written straight to disk, because the process exits right after it is set. */
+    var lastRelaunch: Long
+        get() = prefs.getLong(KEY_LAST_RELAUNCH, 0)
+        set(value) {
+            prefs.edit().putLong(KEY_LAST_RELAUNCH, value).commit()
+        }
+
+    /** Keyed by Telegram.listKey, so the archive works like any folder. It stays quiet unless changed. */
+    fun alertMode(listKey: String): AlertMode =
+        runCatching { AlertMode.valueOf(prefs.getString(KEY_ALERT_MODE + listKey, null) ?: "") }
+            .getOrDefault(if (listKey == "archive") AlertMode.Off else AlertMode.All)
+
+    fun setAlertMode(listKey: String, mode: AlertMode) {
+        prefs.edit().putString(KEY_ALERT_MODE + listKey, mode.name).apply()
+    }
+
+    fun alertSound(listKey: String): String? = prefs.getString(KEY_ALERT_SOUND + listKey, null)
+
+    fun setAlertSound(listKey: String, uri: String?) {
+        prefs.edit().putString(KEY_ALERT_SOUND + listKey, uri).apply()
+    }
+
     fun setTheme(mode: ThemeMode) {
         prefs.edit().putString(KEY_THEME, mode.name).apply()
         _theme.value = mode
@@ -70,5 +93,8 @@ class Settings(context: Context) {
         const val KEY_SERVER_TOKEN = "server_token"
         const val KEY_KEEP_CONNECTED = "keep_connected"
         const val KEY_LAST_UPDATE_CHECK = "last_update_check"
+        const val KEY_LAST_RELAUNCH = "last_relaunch"
+        const val KEY_ALERT_MODE = "alert_mode_"
+        const val KEY_ALERT_SOUND = "alert_sound_"
     }
 }

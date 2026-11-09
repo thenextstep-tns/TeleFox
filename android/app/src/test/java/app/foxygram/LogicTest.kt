@@ -9,6 +9,8 @@ import app.foxygram.model.RichText
 import app.foxygram.model.Sender
 import app.foxygram.model.buildFeed
 import app.foxygram.notify.AlertFacts
+import app.foxygram.notify.AlertMode
+import app.foxygram.notify.loudestMode
 import app.foxygram.notify.shouldAlert
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -29,6 +31,13 @@ class LogicTest {
     @Test fun mentionBreaksMute() = assertTrue(shouldAlert(base.copy(muted = true, mentionsMe = true)))
     @Test fun mentionRespectsItsOwnSetting() = assertFalse(shouldAlert(base.copy(muted = true, mentionsMe = true, mentionAlertsOff = true)))
     @Test fun catchUpAfterSleepIsSilent() = assertFalse(shouldAlert(base.copy(ageSeconds = 3600)))
+    @Test fun folderOffSilencesEvenMentions() = assertFalse(shouldAlert(base.copy(mentionsMe = true, folderMode = AlertMode.Off)))
+    @Test fun mentionsFolderSkipsPlainMessages() = assertFalse(shouldAlert(base.copy(folderMode = AlertMode.Mentions)))
+    @Test fun mentionsFolderAlertsOnMention() = assertTrue(shouldAlert(base.copy(mentionsMe = true, folderMode = AlertMode.Mentions)))
+    @Test fun mentionsFolderRespectsChatSetting() = assertFalse(shouldAlert(base.copy(mentionsMe = true, mentionAlertsOff = true, folderMode = AlertMode.Mentions)))
+    @Test fun loudestFolderWins() = assertEquals(AlertMode.All, loudestMode(listOf(AlertMode.Off, AlertMode.All, AlertMode.Mentions)))
+    @Test fun quietFoldersStayQuiet() = assertEquals(AlertMode.Mentions, loudestMode(listOf(AlertMode.Off, AlertMode.Mentions)))
+    @Test fun noFoldersMeansNormalAlerts() = assertEquals(AlertMode.All, loudestMode(emptyList()))
 
     private val day = 1_700_000_000
     private val alice = Sender(1, "Alice")

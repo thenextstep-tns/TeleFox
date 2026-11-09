@@ -1,10 +1,14 @@
 package app.foxygram.ui.settings
 
+import android.app.Activity
 import android.content.Intent
+import android.media.RingtoneManager
 import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -49,6 +53,7 @@ import androidx.compose.ui.unit.sp
 import app.foxygram.BuildConfig
 import app.foxygram.data.AiChat
 import app.foxygram.data.ServerHealth
+import app.foxygram.notify.AlertMode
 import app.foxygram.notify.ConnectionService
 import app.foxygram.td.Telegram
 import app.foxygram.ui.cases.EmptyNote
@@ -109,6 +114,8 @@ fun SettingsScreen(telegram: Telegram, onBack: () -> Unit) {
             }
             Text(diagnostics, color = colors.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp).clickable { diagnostics = telegram.alerts.diagnostics() })
 
+            FolderAlerts(telegram)
+
             Section("Сервер")
             val state = health
             Text(
@@ -150,6 +157,82 @@ fun SettingsScreen(telegram: Telegram, onBack: () -> Unit) {
                 }) { Text("Обновить") }
             },
             dismissButton = { TextButton({ update = null }) { Text("Позже") } },
+            containerColor = colors.surface,
+        )
+    }
+}
+
+private data class FolderAlert(val key: String, val title: String, val mode: AlertMode, val sound: String?)
+
+private fun modeLabel(mode: AlertMode) = when (mode) {
+    AlertMode.All -> "Все сообщения"
+    AlertMode.Mentions -> "Только упоминания"
+    AlertMode.Off -> "Выключены"
+}
+
+/** Each folder, and the archive, can alert differently. */
+@Composable
+private fun FolderAlerts(telegram: Telegram) {
+    val colors = Foxy.colors
+    val settings = telegram.settings
+    val folders by telegram.folders.collectAsState()
+    var revision by remember { mutableStateOf(0) }
+    var editing by remember { mutableStateOf<String?>(null) }
+    val rows = remember(folders, revision) {
+        telegram.alertFolders(folders).map { (key, title) -> FolderAlert(key, title, settings.alertMode(key), settings.alertSound(key)) }
+    }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val key = editing
+        if (key != null && result.resultCode == Activity.RESULT_OK) {
+            @Suppress("DEPRECATION")
+            val picked = result.data?.getParcelableExtra<Uri>(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
+            settings.setAlertSound(key, picked?.toString())
+            revision++
+        }
+    }
+
+    Section("Уведомления по папкам")
+    Text("Если чат в нескольких папках, действует самая громкая настройка.", color = colors.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp))
+    rows.forEach { row ->
+        Row1(row.title, modeLabel(row.mode) + if (row.sound != null) " · свой звук" else "") { editing = row.key }
+    }
+
+    rows.firstOrNull { it.key == editing }?.let { row ->
+        fun choose(mode: AlertMode) {
+            settings.setAlertMode(row.key, mode)
+            revision++
+        }
+        AlertDialog(
+            onDismissRequest = { editing = null },
+            title = { Text(row.title) },
+            text = {
+                Column {
+                    listOf(AlertMode.All, AlertMode.Mentions, AlertMode.Off).forEach { mode ->
+                        Row(Modifier.fillMaxWidth().clickable { choose(mode) }.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(row.mode == mode, { choose(mode) })
+                            Text(modeLabel(mode), color = colors.text, fontSize = 16.sp)
+                        }
+                    }
+                    TextButton({
+                        runCatching {
+                            picker.launch(
+                                Intent(RingtoneManager.ACTION_RINGTONE_PICKER)
+                                    .putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_NOTIFICATION)
+                                    .putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, false)
+                                    .putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
+                                    .putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, row.sound?.let { Uri.parse(it) })
+                            )
+                        }
+                    }) { Text("Выбрать звук") }
+                    if (row.sound != null) {
+                        TextButton({
+                            settings.setAlertSound(row.key, null)
+                            revision++
+                        }) { Text("Вернуть стандартный звук") }
+                    }
+                }
+            },
+            confirmButton = { TextButton({ editing = null }) { Text("Готово") } },
             containerColor = colors.surface,
         )
     }
