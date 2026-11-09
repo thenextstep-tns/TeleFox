@@ -28,7 +28,18 @@ public class TeleFoxService extends Service {
     public static volatile android.content.Context appContext;
     public static volatile String lastError = null;
 
+    /** Shared with the engine and this app's WebView only; new on every process start. */
+    static final String ACCESS_TOKEN = newAccessToken();
+
     private static Thread pythonThread = null;
+
+    private static String newAccessToken() {
+        byte[] bytes = new byte[32];
+        new java.security.SecureRandom().nextBytes(bytes);
+        StringBuilder hex = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) hex.append(String.format("%02x", b));
+        return hex.toString();
+    }
 
     @Override
     public void onCreate() {
@@ -78,6 +89,7 @@ public class TeleFoxService extends Service {
                 Python py = Python.getInstance();
                 String dataDir = ctx.getFilesDir().getAbsolutePath();
                 py.getModule("os").get("environ").callAttr("__setitem__", "TELEFOX_DATA_DIR", dataDir);
+                py.getModule("os").get("environ").callAttr("__setitem__", "TELEFOX_API_TOKEN", ACCESS_TOKEN);
                 py.getModule("main").callAttr("run_embedded", dataDir);
             } catch (Throwable t) {
                 java.io.StringWriter sw = new java.io.StringWriter();

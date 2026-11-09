@@ -1,3 +1,5 @@
+import hmac
+import hmac
 import os
 import re
 import json
@@ -13,9 +15,10 @@ from typing import Optional, Dict, Any, List
 
 from fastapi import FastAPI, Request, HTTPException, Response, Query
 from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
-from fastapi.middleware.cors import CORSMiddleware
+from starlette.requests import HTTPConnection
+from starlette.responses import PlainTextResponse
 
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from telethon import utils as tl_utils
 from telethon.tl.functions.messages import (
     GetForumTopicsRequest,
@@ -79,13 +82,41 @@ logger = logging.getLogger("server")
 
 app = FastAPI(title="Telethon Ops Dashboard", version="1.1.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+LOCAL_HOSTS = ("127.0.0.1", "localhost")
+ACCESS_COOKIE = "telefox_token"
+ACCESS_HEADER = "x-telefox-token"
+PAGE_POLICY = (
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; font-src 'self' data:; "
+    "object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self'"
 )
+
+
+class LocalAccess:
+    """Serves this device's own page only. On the phone the app's WebView is given a per-launch token."""
+
+    def __init__(self, app, token: str):
+        self.app = app
+        self.token = token.encode()
+
+    def allowed(self, connection: HTTPConnection) -> bool:
+        host = connection.headers.get("host", "").rsplit(":", 1)[0]
+        origin = connection.headers.get("origin")
+        if host not in LOCAL_HOSTS or (origin and urlsplit(origin).hostname not in LOCAL_HOSTS):
+            return False
+        if not self.token:
+            return True
+        supplied = connection.cookies.get(ACCESS_COOKIE) or connection.headers.get(ACCESS_HEADER, "")
+        return hmac.compare_digest(supplied.encode(), self.token)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and not self.allowed(HTTPConnection(scope)):
+            await PlainTextResponse("Forbidden", status_code=403)(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(LocalAccess, token=os.environ.get("TELEFOX_API_TOKEN", ""))
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 if not WEB_DIR.exists():
@@ -304,7 +335,8 @@ async def get_index():
             headers={
                 "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
                 "Pragma": "no-cache",
-                "Expires": "0"
+                "Expires": "0",
+                "Content-Security-Policy": PAGE_POLICY,
             }
         )
     return "<h1>Web Dashboard UI file not found</h1>"

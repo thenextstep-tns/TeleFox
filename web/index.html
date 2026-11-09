@@ -1452,7 +1452,7 @@
         const icon = p.type === 'auto' ? '' : (p.type === 'hr' ? '' : '');
 
         html += `
-          <button class="project-chip ${currentProjectFilter === p.id ? 'active' : ''}" onclick="setProjectFilter('${p.id}')" title="Проект: ${escapeAttr(p.name)}">
+          <button class="project-chip ${currentProjectFilter === p.id ? 'active' : ''}" onclick="setProjectFilter('${p.id}')" title="Проект: ${escapeHtml(p.name)}">
             <span style="display:inline-block; width:7px; height:7px; border-radius:50%; background:${pColor};"></span>
             <span>${icon} ${escapeHtml(p.name)} (${pChats.length})</span>
             ${pUnread > 0 ? `<span class="chip-unread-badge">${pUnread}</span>` : ''}
@@ -2617,6 +2617,16 @@
       return s;
     }
 
+    // The text has had & < > escaped already; quotes must not be able to end the attribute.
+    function safeHref(url) {
+      return url.replace(/"/g, '%22').replace(/'/g, '%27');
+    }
+
+    // The text has had & < > escaped already; quotes must not be able to end the attribute.
+    function safeHref(url) {
+      return url.replace(/"/g, '%22').replace(/'/g, '%27');
+    }
+
     function formatTelegramMessage(text) {
       if (!text) return '';
       const codeBlocks = [];
@@ -2648,7 +2658,7 @@
         const formattedLabel = label
           .replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>')
           .replace(/__([^_]+?)__/g, '<em>$1</em>');
-        mdLinks.push({ label: formattedLabel, url: fullUrl });
+        mdLinks.push({ label: formattedLabel, url: safeHref(fullUrl) });
         return '§§§MDLINK' + id + '§§§';
       });
 
@@ -3088,7 +3098,7 @@
         if (isSel) foundInList = true;
         const statusIcon = wf.active ? '' : '';
         const statusLabel = wf.active ? '[Активен]' : '[Выключен]';
-        html += `<option value="${escapeAttr(wf.name)}" ${isSel ? 'selected' : ''}>${statusIcon} ${escapeHtml(wf.name)} ${statusLabel}</option>`;
+        html += `<option value="${escapeHtml(wf.name)}" ${isSel ? 'selected' : ''}>${statusIcon} ${escapeHtml(wf.name)} ${statusLabel}</option>`;
       });
 
       const isCustom = selectedValue && !foundInList;
@@ -3127,9 +3137,12 @@
       })[m]);
     }
 
+    // For a value inside a JS string in an inline handler. HTML entities are decoded before the
+    // script runs, so & needs the same treatment as the quotes.
     function escapeAttr(str) {
       if (!str) return '';
-      return String(str).replace(/["'\\]/g, ' ');
+      return String(str).replace(/[&<>"'`\\\r\n\u2028\u2029]/g,
+        c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
     }
 
     // ================== УПРАВЛЕНИЕ ПРОЕКТАМИ И КАТЕГОРИЯМИ ==================
@@ -3196,11 +3209,11 @@
             else actionBadge = `<span class="badge">${escapeHtml(c.action || 'webhook')}</span>`;
 
             const procBadge = c.process_name ? 
-              `<span class="badge" style="background:var(--tg-border); color:var(--accent); font-weight:600;" title="${escapeAttr(c.process_name)}">${escapeHtml(c.process_name)}</span>` : 
+              `<span class="badge" style="background:var(--tg-border); color:var(--accent); font-weight:600;" title="${escapeHtml(c.process_name)}">${escapeHtml(c.process_name)}</span>` : 
               `<span style="color:var(--text-muted); font-size:11px;">— (Общий пайплайн)</span>`;
 
             const webhookStr = c.webhook_url ? 
-              `<span style="font-family:monospace; font-size:11px; color:var(--accent);" title="${escapeAttr(c.webhook_url)}">кастомный URL</span>` : 
+              `<span style="font-family:monospace; font-size:11px; color:var(--accent);" title="${escapeHtml(c.webhook_url)}">кастомный URL</span>` : 
               `<span style="color:var(--text-muted); font-size:11px;">N8N_WEBHOOK_URL (общий)</span>`;
 
             return `

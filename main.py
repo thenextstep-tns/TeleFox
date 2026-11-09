@@ -419,7 +419,7 @@ async def run_single_client(account: dict, default_api_id: int, default_api_hash
     await client.disconnect()
 
 # На телефоне API с сессиями Telegram доступен только самому приложению.
-BIND_HOST = "127.0.0.1" if os.environ.get("TELEFOX_DATA_DIR") else "0.0.0.0"
+BIND_HOST = "127.0.0.1"
 SYNC_INTERVAL_SEC = 60          # как часто проверять соединение и догружать пропущенное
 CATCH_UP_TIMEOUT_SEC = 45       # максимум на одну догрузку обновлений
 CATEGORY_LOOKUP_TIMEOUT_SEC = 3 # база категорий не должна задерживать уведомление

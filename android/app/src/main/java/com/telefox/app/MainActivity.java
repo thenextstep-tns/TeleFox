@@ -22,6 +22,7 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
@@ -44,6 +45,8 @@ public class MainActivity extends Activity {
 
     public static final String EXTRA_CHAT_ID = "chat_id";
     private static final String SERVER_URL = "http://127.0.0.1:5050" /* keep in sync with config.WEB_PORT */;
+    private static final String ACCESS_COOKIE = "telefox_token" /* keep in sync with server.ACCESS_COOKIE */;
+    private static final String ACCESS_HEADER = "x-telefox-token" /* keep in sync with server.ACCESS_HEADER */;
     private static final int POLL_INTERVAL_MS = 500;
     private static final int POLL_ATTEMPTS = 60; // 30 s in total
     private static final int PROBE_TIMEOUT_MS = 600;
@@ -230,9 +233,23 @@ public class MainActivity extends Activity {
         ws.setAllowContentAccess(false);
         ws.setMediaPlaybackRequiresUserGesture(true);
 
+        CookieManager cookies = CookieManager.getInstance();
+        cookies.setAcceptCookie(true);
+        cookies.setCookie(SERVER_URL, ACCESS_COOKIE + "=" + TeleFoxService.ACCESS_TOKEN + "; Path=/; HttpOnly; SameSite=Strict");
+        cookies.flush();
+
         // Without a WebChromeClient the page's prompt()/confirm()/alert() are silently dropped
         webView.setWebChromeClient(new WebChromeClient());
         webView.setWebViewClient(new WebViewClient() {
+            // The page and its native bridge are for the local app only; links leave for the browser.
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                String url = request.getUrl().toString();
+                if (url.equals(SERVER_URL) || url.startsWith(SERVER_URL + "/")) return false;
+                openLink(request.getUrl());
+                return true;
+            }
+
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (request.isForMainFrame()) {
@@ -250,6 +267,18 @@ public class MainActivity extends Activity {
             }
         });
         webView.addJavascriptInterface(new Bridge(), "TeleFoxNative");
+    }
+
+    private void openLink(Uri uri) {
+        String scheme = uri.getScheme();
+        if (!"https".equals(scheme) && !"http".equals(scheme) && !"tg".equals(scheme)) return;
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, uri)
+                    .addCategory(Intent.CATEGORY_BROWSABLE)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (Exception ignored) {
+            // nothing on the phone can open this link
+        }
     }
 
     private void openPendingChat() {
@@ -279,6 +308,7 @@ public class MainActivity extends Activity {
                 }
                 try {
                     HttpURLConnection c = (HttpURLConnection) new URL(SERVER_URL + "/api/status").openConnection();
+                    c.setRequestProperty(ACCESS_HEADER, TeleFoxService.ACCESS_TOKEN);
                     c.setConnectTimeout(PROBE_TIMEOUT_MS);
                     c.setReadTimeout(PROBE_TIMEOUT_MS);
                     int code = c.getResponseCode();
