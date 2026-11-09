@@ -32,6 +32,13 @@ jobs:
           gh release download "tdlib-${SHA:0:12}" -p tdjson-windows-x64.zip -O td.zip
           7z x td.zip -oserver/vendor -y > /dev/null
 
+      - name: Set version
+        run: |
+          VERSION="0.1.${GITHUB_RUN_NUMBER}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          sed -i -E "s/^__version__ = .*/__version__ = \"${VERSION}\"/" server/src/foxygram/__init__.py
+          grep -Fx "__version__ = \"${VERSION}\"" server/src/foxygram/__init__.py
+
       - name: Test
         working-directory: server
         run: uv run --python 3.12 pytest -q
@@ -49,7 +56,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="0.1.${GITHUB_RUN_NUMBER}"
           cd server/dist && 7z a ../../FoxyGram-Server-Windows.zip FoxyGramServer > /dev/null && cd ../..
           git log -1 --format=%B > notes.txt
           gh release create "foxygram-server-v${VERSION}" FoxyGram-Server-Windows.zip \
