@@ -77,6 +77,7 @@ def create_admin(service: Service) -> FastAPI:
                 "connection": auth.connection,
                 "error": auth.error,
                 "code_hint": auth.code_hint,
+                "code_in_telegram": auth.code_in_telegram,
                 "password_hint": auth.password_hint,
                 "has_app_id": bool(service.config.telegram.api_id and service.config.telegram.api_hash),
             },

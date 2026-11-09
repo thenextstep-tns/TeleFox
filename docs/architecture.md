@@ -53,6 +53,11 @@ a Scheduled Task at logon. Settings live in `%LOCALAPPDATA%\FoxyGram\config.toml
 | 8787 | tunnel | phone API | bearer token |
 | 8788 | 127.0.0.1 | admin page | Host allowlist, CSRF header |
 
+The phone reaches port 8787 through a Cloudflare tunnel the server keeps running: a named
+tunnel for a fixed address, or a free quick tunnel whose address changes on restart. The
+server always gives `cloudflared` its own config, so another tunnel on the same machine
+can't take over its routing.
+
 ### Pipeline
 
 Only chats the owner selects are stored. Everything else is dropped on arrival.

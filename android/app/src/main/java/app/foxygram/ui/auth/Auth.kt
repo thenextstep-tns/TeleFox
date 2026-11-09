@@ -152,7 +152,18 @@ fun LoginScreens(telegram: Telegram, state: AuthState) {
                 Image(bitmap.asImageBitmap(), "QR-код", Modifier.size(240.dp))
             }
         }
-        is AuthState.WaitCode -> AuthLayout("Код подтверждения", "Код отправлен в Telegram для ${state.phone}.") {
+        AuthState.PaymentRequired -> AuthLayout(
+            "Telegram просит оплату",
+            "Telegram сделал вход по номеру платным для этого устройства. Вход возможен по QR-коду с устройства, где Telegram уже открыт.",
+        ) {
+            primary("Войти по QR-коду", !busy) { submit { telegram.requestQr() } }
+            ErrorLine()
+        }
+        is AuthState.WaitCode -> AuthLayout(
+            "Код подтверждения",
+            if (state.inTelegram) "Код придёт сообщением от Telegram в другой ваш вход, например в TeleFox, а не по SMS."
+            else "Код придёт на ${state.phone} по SMS или звонком.",
+        ) {
             var code by remember { mutableStateOf("") }
             field(code, { code = it }, "Код", KeyboardType.Number)
             Spacer(Modifier.height(16.dp))

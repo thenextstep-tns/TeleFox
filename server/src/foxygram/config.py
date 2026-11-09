@@ -20,13 +20,17 @@ api_hash = "{api_hash}"
 api_port = 8787
 # The control page. Only ever reachable from this computer.
 admin_port = 8788
-# A stable address for api_port, if you run your own tunnel. Empty means use tunnel.mode.
+# The fixed public address of api_port, if you have one.
 public_url = ""
 
 [tunnel]
-# "quick" starts a free temporary Cloudflare address; "none" leaves it to you.
+# "quick" starts a free temporary Cloudflare address.
+# "named" runs your own Cloudflare tunnel for public_url, using the two settings below.
+# "none" leaves it to you.
 mode = "quick"
 cloudflared = "cloudflared"
+tunnel_id = ""
+credentials_file = ""
 
 [claude]
 command = "claude"
@@ -75,6 +79,8 @@ class ServerConfig:
 class TunnelConfig:
     mode: str = "quick"
     cloudflared: str = "cloudflared"
+    tunnel_id: str = ""
+    credentials_file: str = ""
 
 
 @dataclass(frozen=True)

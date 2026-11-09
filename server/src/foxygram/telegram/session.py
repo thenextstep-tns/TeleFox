@@ -26,6 +26,7 @@ class AuthStatus:
     state: str = "starting"
     qr_link: str = ""
     code_hint: str = ""
+    code_in_telegram: bool = False
     password_hint: str = ""
     error: str = ""
     connection: str = ""
@@ -184,7 +185,11 @@ class TelegramSession:
                 self.auth.qr_link = state["link"]
             case "authorizationStateWaitCode":
                 self.auth.state = "need_code"
-                self.auth.code_hint = state.get("code_info", {}).get("phone_number", "")
+                info = state.get("code_info", {})
+                self.auth.code_hint = info.get("phone_number", "")
+                self.auth.code_in_telegram = info.get("type", {}).get("@type") == "authenticationCodeTypeTelegramMessage"
+            case "authorizationStateWaitPremiumPurchase":
+                self.auth.state = "payment_required"
             case "authorizationStateWaitPassword":
                 self.auth.state = "need_password"
                 self.auth.password_hint = state.get("password_hint", "")

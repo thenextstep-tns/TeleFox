@@ -40,7 +40,8 @@ sealed interface AuthState {
     data object Starting : AuthState
     data object WaitPhone : AuthState
     data class WaitQr(val link: String) : AuthState
-    data class WaitCode(val phone: String) : AuthState
+    data class WaitCode(val phone: String, val inTelegram: Boolean) : AuthState
+    data object PaymentRequired : AuthState
     data class WaitPassword(val hint: String) : AuthState
     data object Ready : AuthState
     data class Unsupported(val state: String) : AuthState
@@ -180,7 +181,9 @@ class Telegram private constructor(private val app: Application, val settings: S
             is TdApi.AuthorizationStateWaitTdlibParameters -> sendParameters()
             is TdApi.AuthorizationStateWaitPhoneNumber -> _auth.value = AuthState.WaitPhone
             is TdApi.AuthorizationStateWaitOtherDeviceConfirmation -> _auth.value = AuthState.WaitQr(state.link)
-            is TdApi.AuthorizationStateWaitCode -> _auth.value = AuthState.WaitCode(state.codeInfo.phoneNumber)
+            is TdApi.AuthorizationStateWaitCode -> _auth.value =
+                AuthState.WaitCode(state.codeInfo.phoneNumber, state.codeInfo.type is TdApi.AuthenticationCodeTypeTelegramMessage)
+            is TdApi.AuthorizationStateWaitPremiumPurchase -> _auth.value = AuthState.PaymentRequired
             is TdApi.AuthorizationStateWaitPassword -> _auth.value = AuthState.WaitPassword(state.passwordHint)
             is TdApi.AuthorizationStateReady -> {
                 _auth.value = AuthState.Ready

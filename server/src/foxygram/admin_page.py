@@ -91,7 +91,10 @@ function renderTelegram(t) {
       body.innerHTML=`<div class="muted">Telegram на телефоне: Настройки, Устройства, Подключить устройство.</div><div class="qr"><img id="loginQr" src="/api/qr/login.svg?${Date.now()}"></div>${err}`; break;
     case 'need_code':
       pill.textContent='введите код'; pill.className='pill warn';
-      body.innerHTML=`<div class="row"><input type="text" id="code" placeholder="Код из Telegram"><button onclick="post('/api/login/code',{code:$('code').value})">Подтвердить</button></div>${err}`; break;
+      body.innerHTML=`<div class="muted">${t.code_in_telegram ? 'Код придёт сообщением от Telegram в другой ваш вход, например в TeleFox, а не по SMS.' : 'Код придёт на ' + esc(t.code_hint) + ' по SMS или звонком.'}</div><div class="row"><input type="text" id="code" placeholder="Код из Telegram"><button onclick="post('/api/login/code',{code:$('code').value})">Подтвердить</button></div>${err}`; break;
+    case 'payment_required':
+      pill.textContent='Telegram просит оплату'; pill.className='pill warn';
+      body.innerHTML=`<div class="muted">Telegram сделал вход по номеру платным для этого устройства. Сервер оплатить его не может. Вход возможен по QR-коду с устройства, где Telegram уже открыт.</div><div class="row"><button onclick="post('/api/login/qr')">Войти по QR-коду</button></div>${err}`; break;
     case 'need_password':
       pill.textContent='нужен пароль'; pill.className='pill warn';
       body.innerHTML=`<div class="muted">${esc(t.password_hint)}</div><div class="row"><input type="password" id="pw" placeholder="Облачный пароль"><button onclick="post('/api/login/password',{password:$('pw').value})">Войти</button></div>${err}`; break;
