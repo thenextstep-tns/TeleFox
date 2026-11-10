@@ -93,6 +93,16 @@ Both call `/v1/brain/chats/{id}` on the server, and the server calls Brain's
 leaves the PC. Chat ids go to Brain unchanged: TDLib's ids are already the "marked" format
 Brain uses. When Brain isn't running, the menu says so.
 
+In the browser, a chat that is in at least one job gets Brain's side panel next to the
+messages (`/v1/brain/chats/{id}/panel`). Messages Brain analysed carry a small mark, with a
+spinner while a run is working; clicking one shows Brain's decision and the actions it
+proposed, with their exact text, recipient and status. A paused job is called out. Open
+proposals can be approved, edited, rejected or answered from the panel, through Brain's
+`/brain/api/decide`, whose rules still apply. Brain keeps Telegram's own message ids; the
+server turns them into TDLib's (`id << 20`) before the browser matches them. The panel polls
+every few seconds while a run is working and every 15 seconds otherwise. Chats in no job
+show nothing.
+
 ### Pipeline
 
 Only chats the owner selects are stored. Everything else is dropped on arrival.

@@ -18,6 +18,14 @@ TIMEOUT_SECONDS = 5
 TOKEN_KEY = "BRAIN_TOKEN"
 
 
+# Brain keeps Telegram's own message ids. TDLib's id for a message on Telegram's servers is that id shifted left by 20.
+TDLIB_SHIFT = 20
+
+
+def to_tdlib(message_id: int) -> int:
+    return int(message_id) << TDLIB_SHIFT
+
+
 class BrainError(Exception):
     """Something the person can act on. status is what the server answers its own caller with."""
 
@@ -60,6 +68,23 @@ class Brain:
     async def reset(self, chat_id: int) -> dict[str, Any]:
         """Forgets the owner's own changes for this chat, so only Telegram folders decide."""
         return await self._call("POST", "/chats/api/reset", {"chatId": str(chat_id)})
+
+    async def analysis(self, chat_id: int, limit: int = 100) -> dict[str, Any]:
+        """What Brain made of this chat's messages: one item per agent run, with its decisions and proposed actions."""
+        query = urllib.parse.urlencode({"chatId": str(chat_id), "limit": str(limit)})
+        return await self._call("GET", f"/brain/api/chat-analysis?{query}")
+
+    async def status(self) -> dict[str, Any]:
+        return await self._call("GET", "/brain/api/status")
+
+    async def decide(self, action_id: int, decision: str, text: str | None = None, reason: str | None = None) -> dict[str, Any]:
+        """The owner's answer to something Brain proposed. Brain's own rules apply: nothing is sent without approve."""
+        body: dict[str, Any] = {"id": action_id, "decision": decision}
+        if text is not None:
+            body["text"] = text
+        if reason is not None:
+            body["reason"] = reason
+        return await self._call("POST", "/brain/api/decide", body)
 
     async def _call(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         token = self.token()

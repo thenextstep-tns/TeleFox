@@ -14,6 +14,15 @@ from foxygram.config import BrainConfig
 
 TOKEN = "brain-token-for-test"
 JOBS = [{"id": "job1", "name": "Job 1 - amoCRM"}, {"id": "job2", "name": "Job 2 - Datatruck"}]
+ANALYSIS = {
+    "runId": 6, "job": "job2", "jobName": "Job 2 - Datatruck", "at": "2026-11-10 18:31:18", "messageIds": [101, 102],
+    "status": "done", "working": False,
+    "decisions": [{"runId": 6, "at": "2026-11-10 18:31:18", "text": "This needs a reply."}],
+    "actions": [{"id": 3, "runId": 6, "kind": "approval", "actionType": "telegram.send", "status": "open",
+                 "statusText": "Waiting for you", "to": "Test Group", "text": "Got it", "question": None, "options": [],
+                 "reason": "", "answer": None, "result": None, "createdAt": "2026-11-10 18:31:18", "resolvedAt": None}],
+    "summary": "",
+}
 
 
 class FakeBrain(BaseHTTPRequestHandler):
@@ -46,6 +55,14 @@ class FakeBrain(BaseHTTPRequestHandler):
         if self.path.startswith("/chats/api/chat?"):
             chat_id = self.path.split("chatId=")[1]
             return self.reply(200, {"jobs": JOBS, "connected": True, "chat": self.chat(chat_id)})
+        if self.path.startswith("/brain/api/chat-analysis?"):
+            return self.reply(200, {"chatId": "-5534970202", "items": [ANALYSIS]})
+        if self.path == "/brain/api/status":
+            return self.reply(200, {"jobs": [{"id": "job1", "paused": False}, {"id": "job2", "paused": True}], "running": 0, "open": 1})
+        if self.path == "/brain/api/decide":
+            if body.get("decision") == "answer" and not body.get("text"):
+                return self.reply(400, {"error": "Write an answer first."})
+            return self.reply(200, {"text": f"#{body['id']} {body['decision']}"})
         if self.path == "/chats/api/assign":
             if body["jobId"] not in {j["id"] for j in JOBS}:
                 return self.reply(400, {"error": f'There is no job "{body["jobId"]}".'})
@@ -169,6 +186,50 @@ async def test_a_stopped_brain_is_reported_not_crashed(service):
     async with httpx.AsyncClient(transport=transport, base_url="http://x", headers=headers) as phone:
         response = await phone.get("/v1/brain/chats/1")
     assert response.status_code == 503 and "Brain не запущен" in response.json()["detail"]
+
+
+def test_telegram_message_ids_become_tdlibs():
+    from foxygram.brain import to_tdlib
+    assert to_tdlib(114) == 119_537_664  # run #5, message 114 of "Truck 325", as TDLib numbers it
+    assert to_tdlib(129446) == 129446 * 1_048_576
+
+
+async def test_the_panel_shows_only_for_chats_in_a_job(service, brain_url, brain_env):
+    use_brain(service, brain_url, env_file=str(brain_env))
+    port = service.config.server.admin_port
+    transport = httpx.ASGITransport(app=create_admin(service))
+    async with httpx.AsyncClient(transport=transport, base_url=f"http://127.0.0.1:{port}") as browser:
+        outside = (await browser.get("/v1/brain/chats/-5534970202/panel")).json()
+        assert outside == {"active": False, "jobs": [], "items": []}
+        assert not any(asked["path"].startswith("/brain/api/") for asked in FakeBrain.seen)
+
+        await browser.post("/v1/brain/chats/-5534970202/jobs", json={"job_id": "job2", "on": True}, headers={"x-foxygram": "1"})
+        panel = (await browser.get("/v1/brain/chats/-5534970202/panel")).json()
+    assert panel["active"] is True
+    assert panel["jobs"] == [{"id": "job2", "name": "Job 2 - Datatruck", "paused": True}]
+    item = panel["items"][0]
+    assert item["telegramMessageIds"] == [101, 102]
+    assert item["messageIds"] == [101 << 20, 102 << 20]
+    assert item["actions"][0]["text"] == "Got it" and item["decisions"][0]["text"] == "This needs a reply."
+    asked = [a["path"] for a in FakeBrain.seen]
+    assert any(p.startswith("/brain/api/chat-analysis?chatId=-5534970202") for p in asked)
+
+
+async def test_decisions_reach_brain_and_its_refusals_come_back(service, brain_url, brain_env):
+    use_brain(service, brain_url, env_file=str(brain_env))
+    port = service.config.server.admin_port
+    transport = httpx.ASGITransport(app=create_admin(service))
+    async with httpx.AsyncClient(transport=transport, base_url=f"http://127.0.0.1:{port}") as browser:
+        csrf = {"x-foxygram": "1"}
+        assert (await browser.post("/v1/brain/actions/3/decide", json={"decision": "approve"})).status_code == 403
+        done = await browser.post("/v1/brain/actions/3/decide", json={"decision": "reject", "reason": "Уточни время"}, headers=csrf)
+        assert done.json() == {"text": "#3 reject"}
+        assert FakeBrain.seen[-1]["body"] == {"id": 3, "decision": "reject", "reason": "Уточни время"}
+        refused = await browser.post("/v1/brain/actions/3/decide", json={"decision": "answer", "text": ""}, headers=csrf)
+        assert refused.status_code == 400 and refused.json()["detail"] == "Write an answer first."
+        unknown = await browser.post("/v1/brain/actions/3/decide", json={"decision": "send-everything"}, headers=csrf)
+        assert unknown.status_code == 422
+    assert all(asked["token"] == TOKEN for asked in FakeBrain.seen)
 
 
 def test_brain_settings_have_safe_defaults(config):

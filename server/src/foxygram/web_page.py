@@ -227,6 +227,45 @@ a { color:inherit; }
 .chip { border-radius:16px; padding:7px 14px; background:var(--surface-high); color:var(--text); font-size:14px; cursor:pointer; border:0; }
 .chip.on { background:var(--accent-soft); color:var(--accent); font-weight:500; }
 .brain-note { color:var(--text2); font-size:14px; padding:4px 20px 12px; }
+.ib.on { color:var(--accent); }
+.chat-wrap { flex:1; display:flex; min-height:0; position:relative; }
+.chat-wrap > .screen { min-width:0; }
+.bpanel { flex:0 0 360px; display:flex; flex-direction:column; min-height:0; border-left:1px solid var(--border); background:var(--bg); }
+.bpanel.closed { display:none; }
+@media (max-width: 1279px) {
+  .bpanel { position:absolute; top:0; right:0; bottom:0; width:min(360px, 100%); z-index:6; box-shadow:-8px 0 24px rgba(0,0,0,.35); }
+}
+.bp-head { height:56px; display:flex; align-items:center; gap:6px; padding:0 4px 0 16px; background:var(--surface); flex:none; }
+.bp-title { font-size:17px; font-weight:500; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.bp-body { flex:1; overflow-y:auto; padding:12px; }
+.bp-banner { border-radius:10px; padding:10px 12px; font-size:14px; margin-bottom:10px; color:var(--warning); background:color-mix(in srgb, var(--warning) 12%, transparent); }
+.bp-hint { color:var(--text2); font-size:14px; padding:2px 2px 10px; }
+.bp-sub { color:var(--text2); font-size:13px; font-weight:500; margin:6px 2px 8px; }
+.bp-msg { border-left:3px solid var(--accent); background:var(--accent-soft); border-radius:6px; padding:6px 10px; margin-bottom:10px; font-size:14px; }
+.bp-msg .who { font-weight:500; color:var(--accent); }
+.bp-msg .txt2 { display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; overflow:hidden; white-space:pre-wrap; overflow-wrap:anywhere; }
+.brun { background:var(--surface); border-radius:12px; padding:12px; margin-bottom:10px; }
+.brun-top { display:flex; align-items:center; flex-wrap:wrap; gap:6px; font-size:13px; color:var(--text2); }
+.brun-label { color:var(--text2); font-size:12px; font-weight:500; text-transform:uppercase; letter-spacing:.03em; margin-top:10px; }
+.brun-text { font-size:15px; margin-top:4px; white-space:pre-wrap; overflow-wrap:anywhere; }
+.brun-sum { font-size:13px; color:var(--text2); margin-top:8px; white-space:pre-wrap; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:5; -webkit-box-orient:vertical; overflow:hidden; }
+.working { display:inline-flex; align-items:center; gap:6px; color:var(--accent); font-weight:500; }
+.spin-sm { width:12px; height:12px; border-radius:50%; border:2px solid var(--accent-soft); border-top-color:var(--accent); animation:spin 1s linear infinite; display:inline-block; }
+.bact { border:1px solid var(--border); border-radius:10px; padding:10px; margin-top:8px; }
+.bact-kind { font-size:13px; color:var(--text2); }
+.bact-line { font-size:13px; margin-top:4px; overflow-wrap:anywhere; }
+.bact-text { margin-top:6px; padding:8px 10px; border-radius:8px; background:var(--bubble-out); white-space:pre-wrap; overflow-wrap:anywhere; font-size:15px; }
+.bact-status { margin-top:6px; font-size:13px; font-weight:500; }
+.bact-buttons { display:flex; flex-wrap:wrap; gap:2px; margin:6px 0 0 -12px; }
+.bact-input { width:100%; margin-top:6px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:8px 10px; font:15px/20px Roboto, "Segoe UI", system-ui, sans-serif; resize:vertical; outline:none; }
+.bact-input:focus { border-color:var(--accent); }
+.bopt { border:1px solid var(--accent); color:var(--accent); background:none; border-radius:16px; padding:5px 12px; font-size:14px; cursor:pointer; margin:6px 6px 0 0; }
+.bopt:hover { background:var(--accent-soft); }
+.bmark { align-self:flex-end; width:22px; height:22px; border-radius:50%; display:grid; place-items:center; margin:0 4px 2px; background:var(--accent-soft); color:var(--accent); flex:none; cursor:pointer; }
+.bmark.open { color:var(--warning); background:color-mix(in srgb, var(--warning) 18%, transparent); }
+.bmark.failed { color:var(--danger); background:color-mix(in srgb, var(--danger) 16%, transparent); }
+.m.bsel .bub { box-shadow:0 0 0 2px var(--accent); }
+.m.bsel .bare { outline:2px solid var(--accent); outline-offset:2px; border-radius:12px; }
 .brain-hint { color:var(--text2); font-size:13px; }
 .sw { width:52px; height:32px; border-radius:16px; border:2px solid var(--text2); background:var(--surface-high); position:relative; flex:none; cursor:pointer; padding:0; }
 .sw::after { content:""; position:absolute; width:16px; height:16px; border-radius:50%; background:var(--text2); left:6px; top:6px; transition:all .15s; }
@@ -947,6 +986,7 @@ function closeChatView() {
   const view = CV;
   CV = null;
   view.readObserver.disconnect();
+  clearTimeout(view.brainTimer);
   if (view.textarea) S.drafts[draftKey(view)] = view.textarea.value;
   api(`/app/api/chats/${view.id}/close`, { method: "POST", keepalive: true }).catch(() => {});
 }
@@ -962,7 +1002,10 @@ async function openChatView(id, topic = 0, topicTitle = null) {
   view.scroller = h("div", { class: "feed" }, view.inner);
   view.down = h("button", { class: "down hidden", title: "Вниз", onclick: () => { view.scroller.scrollTop = view.scroller.scrollHeight; } }, icon("down"));
   view.composer = h("div", { class: "composer" });
-  mainPane.replaceChildren(h("div", { class: "screen" }, view.head, h("div", { class: "feedbox" }, view.scroller, view.down), view.composer));
+  // The chat on the left, and Brain's side panel on the right once Brain says this chat is in one of its jobs.
+  view.wrap = h("div", { class: "chat-wrap" },
+    h("div", { class: "screen" }, view.head, h("div", { class: "feedbox" }, view.scroller, view.down), view.composer));
+  mainPane.replaceChildren(view.wrap);
   view.readObserver = new IntersectionObserver(entries => {
     for (const entry of entries) {
       if (!entry.isIntersecting) continue;
@@ -990,6 +1033,7 @@ async function openChatView(id, topic = 0, topicTitle = null) {
     if (topicInfo) view.topicTitle = topicInfo.title;
     renderHeader();
     post(`/app/api/chats/${id}/open`).catch(() => {});
+    loadBrainPanel(view);
     await loadNewest(true);
   } catch (e) {
     if (CV === view) view.inner.replaceChildren(h("div", { class: "svc", text: "Не удалось открыть чат: " + e.message }));
@@ -1025,6 +1069,7 @@ function renderHeader() {
       h("div", { style: "min-width:0" },
         h("div", { class: "chead-title", text: title }),
         subText ? h("div", { class: "chead-sub", text: subText }) : null)),
+    view.brain ? iconButton("robot", "Brain", () => toggleBrainPanel(view), view.panel && !view.panel.classList.contains("closed") ? "on" : "dim") : null,
     iconButton("more", "Ещё", () => chatSheet(chat, "main"))));
   const label = chat.label;
   if (label && label.case_title) {
@@ -1170,6 +1215,7 @@ function renderFeed() {
   view.inner.replaceChildren(...kids);
   view.rows = next;
   if (!rows.length) view.inner.append(h("div", { class: "svc", text: view.oldest ? "Сообщений пока нет" : "Загрузка…" }));
+  applyBrainMarks(view);
   if (atBottom) sc.scrollTop = sc.scrollHeight;
   else if (anchor && next.get(anchor.key)) sc.scrollTop = next.get(anchor.key).el.offsetTop - anchor.offset;
 }
@@ -1187,6 +1233,11 @@ function renderRow(row, mediaWidth) {
   const bare = m.body.type === "sticker" || m.body.type === "round";
   el.append(bare ? bareMessage(m) : bubble(row, mediaWidth));
   el.addEventListener("dblclick", e => { if (!e.target.closest("a, .media, .round-btn, .wave")) setReply(m); });
+  // In a chat Brain analyses, a click on a message shows what Brain made of it.
+  el.addEventListener("click", e => {
+    if (!CV || !CV.brain || e.target.closest("a, .media, button, .wave, .roundv, .quote-reply, .web, .spoiler, .bmark")) return;
+    selectBrainMessage(CV, m.ids || [m.id]);
+  });
   el.addEventListener("contextmenu", e => {
     if (e.target.closest("a")) return;
     e.preventDefault();
@@ -1583,6 +1634,265 @@ async function flushRead() {
 window.addEventListener("focus", scheduleRead);
 document.addEventListener("visibilitychange", scheduleRead);
 
+// ---------- Brain's side panel: what Brain decided about a message, and what it proposed ----------
+const BRAIN_STATUS = {
+  open: "Ждёт вашего решения", approved: "Одобрено, выполняется", executed: "Одобрено и выполнено",
+  failed: "Одобрено, но не получилось", rejected: "Отклонено: ничего не отправлено", answered: "Отвечено",
+  dismissed: "Скрыто: ничего не отправлено",
+};
+const BRAIN_COLOR = { open: "var(--warning)", failed: "var(--danger)", executed: "var(--success)", answered: "var(--success)", approved: "var(--accent)" };
+S.brainChats = LS.get("brainChats", {});
+
+function brainEpoch(at) {
+  // Brain's times are SQLite's UTC "YYYY-MM-DD HH:MM:SS", or ISO.
+  const text = String(at || "");
+  const iso = /^\d{4}-\d\d-\d\d \d\d:\d\d(:\d\d)?$/.test(text) ? text.replace(" ", "T") + "Z" : text;
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? 0 : Math.floor(ms / 1000);
+}
+function brainTime(at) {
+  const epoch = brainEpoch(at);
+  if (!epoch) return "";
+  return dayOf(epoch) === today() ? clock(epoch) : `${listTime(epoch)}, ${clock(epoch)}`;
+}
+function scheduleBrain(view, ms) {
+  clearTimeout(view.brainTimer);
+  view.brainTimer = setTimeout(() => { if (CV === view) loadBrainPanel(view); }, ms);
+}
+async function loadBrainPanel(view) {
+  let data = null;
+  try {
+    data = await api(`/v1/brain/chats/${view.id}/panel`);
+    view.brainError = null;
+  } catch (e) {
+    view.brainError = e.message;
+  }
+  if (CV !== view) return;
+  if (data) {
+    S.brainChats[view.id] = data.active;
+    LS.set("brainChats", S.brainChats);
+  }
+  if (data && !data.active) {
+    view.brain = null;
+    if (view.panel) { view.panel.remove(); view.panel = null; renderHeader(); }
+    applyBrainMarks(view);
+    scheduleBrain(view, 60000);
+    return;
+  }
+  if (!data && !view.brain && !S.brainChats[view.id]) {
+    // Brain is unreachable and this chat wasn't in a job last time: nothing to show.
+    scheduleBrain(view, 30000);
+    return;
+  }
+  if (data) view.brain = data;
+  else if (!view.brain) view.brain = { active: true, jobs: [], items: [] };
+  const created = ensureBrainPanel(view);
+  // Leave the panel alone while you type an answer in it; the next look picks up the changes.
+  const typing = view.panel.contains(document.activeElement) && /INPUT|TEXTAREA/.test(document.activeElement.tagName);
+  if (!typing) renderBrainPanel(view);
+  applyBrainMarks(view);
+  if (created) renderHeader();
+  const working = view.brain.items.some(item => item.working);
+  scheduleBrain(view, document.hidden ? 30000 : working ? 4000 : 15000);
+}
+function ensureBrainPanel(view) {
+  if (view.panel) return false;
+  view.panelBody = h("div", { class: "bp-body" });
+  view.panelTitle = h("div", { class: "bp-title", text: "Brain" });
+  view.panel = h("aside", { class: "bpanel" + (matchMedia("(min-width: 1280px)").matches ? "" : " closed") },
+    h("div", { class: "bp-head" }, view.panelTitle, iconButton("close", "Скрыть панель", () => toggleBrainPanel(view, false), "dim")),
+    view.panelBody);
+  view.wrap.append(view.panel);
+  return true;
+}
+function toggleBrainPanel(view, open) {
+  if (!view.panel) return;
+  const show = open === undefined ? view.panel.classList.contains("closed") : open;
+  view.panel.classList.toggle("closed", !show);
+  renderHeader();
+}
+function selectBrainMessage(view, ids) {
+  view.brainSelected = ids;
+  toggleBrainPanel(view, true);
+  renderBrainPanel(view);
+  applyBrainMarks(view);
+}
+function brainState(view) {
+  const byMessage = new Map();
+  for (const item of (view.brain && view.brain.items) || []) {
+    const open = item.actions.some(a => a.status === "open");
+    const failed = item.status === "error" || item.actions.some(a => a.status === "failed");
+    for (const id of item.messageIds) {
+      const s = byMessage.get(id) || { working: false, open: false, failed: false };
+      s.working = s.working || item.working;
+      s.open = s.open || open;
+      s.failed = s.failed || failed;
+      byMessage.set(id, s);
+    }
+  }
+  return byMessage;
+}
+// Marks the messages Brain has looked at, with a spinner while it is still working on them.
+function applyBrainMarks(view) {
+  if (!view || !view.rows) return;
+  const byMessage = brainState(view);
+  const selected = new Set(view.brain ? view.brainSelected || [] : []);
+  for (const rec of view.rows.values()) {
+    if (!rec.ids || !rec.ids.length) continue;
+    const el = rec.el;
+    el.classList.toggle("bsel", rec.ids.some(id => selected.has(id)));
+    let state = null;
+    for (const id of rec.ids) {
+      const s = byMessage.get(id);
+      if (s) state = state ? { working: state.working || s.working, open: state.open || s.open, failed: state.failed || s.failed } : s;
+    }
+    let mark = el.querySelector(":scope > .bmark");
+    if (!state) { if (mark) mark.remove(); continue; }
+    if (!mark) {
+      mark = h("div", { class: "bmark", onclick: e => { e.stopPropagation(); selectBrainMessage(view, rec.ids); } });
+      if (el.classList.contains("out")) el.prepend(mark); else el.append(mark);
+    }
+    const kind = state.working ? "working" : state.open ? "open" : state.failed ? "failed" : "";
+    if (mark.dataset.kind !== kind || !mark.childElementCount) {
+      mark.dataset.kind = kind;
+      mark.className = "bmark" + (kind && kind !== "working" ? " " + kind : "");
+      mark.title = state.working ? "Brain разбирает это сообщение…" : state.open ? "Brain ждёт вашего решения" : "Brain разобрал это сообщение";
+      mark.replaceChildren(state.working ? h("span", { class: "spin-sm" }) : icon("robot", 14));
+    }
+  }
+}
+function renderBrainPanel(view) {
+  if (!view.panel || !view.brain) return;
+  const brain = view.brain;
+  const jobs = brain.jobs.map(j => j.name).join(", ");
+  view.panelTitle.textContent = jobs ? `Brain · ${jobs}` : "Brain";
+  const kids = [];
+  if (view.brainError) kids.push(h("div", { class: "bp-banner", text: view.brainError }));
+  for (const job of brain.jobs.filter(j => j.paused)) {
+    kids.push(h("div", { class: "bp-banner", text: `Работа «${job.name}» на паузе: новые сообщения не анализируются.` }));
+  }
+  const selected = view.brainSelected;
+  if (selected && selected.length) {
+    const message = selected.map(id => view.msgs.get(id)).find(Boolean);
+    const items = brain.items.filter(item => item.messageIds.some(id => selected.includes(id)));
+    kids.push(h("div", { class: "bp-sub", text: "Сообщение" }));
+    if (message) {
+      const who = message.out ? "Вы" : message.sender ? message.sender.name : (view.chat ? view.chat.title : "");
+      kids.push(h("div", { class: "bp-msg" },
+        h("div", { class: "who", text: `${who} · ${clock(message.date)}` }),
+        h("div", { class: "txt2", text: textOf(message) || "(без текста)" })));
+    }
+    if (!items.length) {
+      const paused = brain.jobs.some(j => j.paused);
+      kids.push(h("div", { class: "bp-hint", text: "Brain не разбирал это сообщение." + (paused ? " Пока работа на паузе, новые сообщения не разбираются." : "") }));
+    }
+    for (const item of items) kids.push(brainRun(view, item, false));
+    kids.push(h("button", { class: "tbtn", style: "margin-left:-12px", text: "Все разборы в этом чате",
+      onclick: () => { view.brainSelected = null; renderBrainPanel(view); applyBrainMarks(view); } }));
+  } else {
+    kids.push(h("div", { class: "bp-hint", text: "Нажмите на сообщение, чтобы увидеть, что решил Brain и что он предлагает сделать." }));
+    if (!brain.items.length) kids.push(h("div", { class: "bp-hint", text: "В этом чате Brain пока ничего не разбирал." }));
+    else kids.push(h("div", { class: "bp-sub", text: "Последние разборы" }), ...brain.items.slice(0, 30).map(item => brainRun(view, item, true)));
+  }
+  view.panelBody.replaceChildren(...kids);
+}
+function brainRun(view, item, withJump) {
+  const run = h("div", { class: "brun" });
+  run.append(h("div", { class: "brun-top" },
+    labelPill(item.jobName, "var(--accent)"),
+    h("span", { text: `разбор №${item.runId} · ${brainTime(item.at)}` }),
+    item.working ? h("span", { class: "working" }, h("span", { class: "spin-sm" }), "Работает…")
+      : item.status === "error" ? labelPill("Ошибка", "var(--danger)") : null));
+  if (withJump && item.messageIds.length) {
+    const count = item.messageIds.length;
+    run.append(h("button", { class: "tbtn", style: "margin:2px 0 0 -12px;padding:4px 12px",
+      text: count > 1 ? `К сообщениям (${count})` : "К сообщению",
+      onclick: () => { selectBrainMessage(view, item.messageIds); jumpTo(item.messageIds[0]); } }));
+  }
+  if (item.decisions.length) {
+    run.append(h("div", { class: "brun-label", text: "Решение" }), ...item.decisions.map(d => h("div", { class: "brun-text", text: d.text })));
+  } else if (item.working) {
+    run.append(h("div", { class: "brun-text", style: "color:var(--text2)", text: "Brain разбирает сообщения…" }));
+  }
+  if (item.actions.length) {
+    run.append(h("div", { class: "brun-label", text: "Предлагает" }), ...item.actions.map(action => brainAction(view, action)));
+  } else if (!item.working && item.decisions.length) {
+    run.append(h("div", { class: "brun-sum", text: "Ничего не предлагает." }));
+  }
+  if (item.summary && !item.working) run.append(h("div", { class: "brun-sum", title: item.summary, text: item.summary }));
+  return run;
+}
+function brainAction(view, action) {
+  const card = h("div", { class: "bact" });
+  const question = action.kind === "escalation";
+  card.append(h("div", { class: "bact-kind", text: question ? "Вопрос к вам" : `Действие: ${action.actionType || "—"}` }));
+  if (action.to) card.append(h("div", { class: "bact-line" }, "Кому: ", h("b", { text: action.to })));
+  if (question && action.question) card.append(h("div", { class: "brun-text", text: action.question }));
+  if (action.text) card.append(h("div", { class: "bact-text", text: action.text }));
+  if (question && action.options && action.options.length && action.status !== "open") {
+    card.append(h("div", { class: "bact-line", style: "color:var(--text2)", text: "Варианты: " + action.options.join(" · ") }));
+  }
+  card.append(h("div", { class: "bact-status", style: `color:${BRAIN_COLOR[action.status] || "var(--text2)"}`,
+    text: BRAIN_STATUS[action.status] || action.statusText || action.status }));
+  if (action.answer) card.append(h("div", { class: "bact-line" }, "Ваш ответ: ", h("b", { text: action.answer })));
+  if (action.reason) card.append(h("div", { class: "bact-line", style: "color:var(--text2)", text: "Пояснение: " + action.reason }));
+  if (action.result) card.append(h("div", { class: "bact-line", style: "color:var(--text2)", text: action.result }));
+  if (action.status === "open") card.append(brainControls(view, action));
+  return card;
+}
+// Your answer goes to Brain, which applies its own rules: nothing is sent to anyone without "approve".
+function brainControls(view, action) {
+  const box = h("div");
+  const send = async body => {
+    box.querySelectorAll("button").forEach(b => { b.disabled = true; });
+    // The answer is in, so the panel may redraw even though its text box still has the focus.
+    if (box.contains(document.activeElement)) document.activeElement.blur();
+    try {
+      const result = await post(`/v1/brain/actions/${action.id}/decide`, body);
+      toast(result.text || "Готово");
+    } catch (e) {
+      toast("Не удалось: " + e.message);
+    }
+    loadBrainPanel(view);
+  };
+  const input = (placeholder, value = "") => {
+    const el = h("textarea", { class: "bact-input", rows: 2, placeholder });
+    el.value = value;
+    return el;
+  };
+  if (action.kind === "escalation") {
+    for (const option of action.options || []) box.append(h("button", { class: "bopt", text: option, onclick: () => send({ decision: "answer", text: option }) }));
+    const answer = input("Свой ответ");
+    box.append(answer, h("div", { class: "bact-buttons" },
+      h("button", { class: "tbtn", text: "Ответить", onclick: () => { if (answer.value.trim()) send({ decision: "answer", text: answer.value.trim() }); else answer.focus(); } }),
+      h("button", { class: "tbtn dim", text: "Скрыть", onclick: () => send({ decision: "dismiss" }) })));
+    return box;
+  }
+  const buttons = h("div", { class: "bact-buttons" });
+  const extra = h("div");
+  buttons.append(
+    h("button", { class: "tbtn", text: "Одобрить", onclick: () => {
+      if (confirm(`Brain выполнит это действие${action.to ? ` (${action.to})` : ""}:\n\n${action.text || action.actionType}\n\nОдобрить?`)) send({ decision: "approve" });
+    } }),
+    h("button", { class: "tbtn", text: "Изменить", onclick: () => {
+      const edited = input("Текст", action.text || "");
+      extra.replaceChildren(edited, h("div", { class: "bact-buttons" },
+        h("button", { class: "tbtn", text: "Одобрить с изменениями", onclick: () => {
+          if (edited.value.trim() && confirm(`Отправить так?\n\n${edited.value.trim()}`)) send({ decision: "approve", text: edited.value.trim() });
+        } })));
+      edited.focus();
+    } }),
+    h("button", { class: "tbtn danger", text: "Отклонить", onclick: () => {
+      const reason = input("Почему (необязательно) — Brain это учтёт");
+      extra.replaceChildren(reason, h("div", { class: "bact-buttons" },
+        h("button", { class: "tbtn danger", text: "Отклонить", onclick: () => send({ decision: "reject", reason: reason.value.trim() || undefined }) })));
+      reason.focus();
+    } }),
+    h("button", { class: "tbtn dim", text: "Скрыть", onclick: () => send({ decision: "dismiss" }) }));
+  box.append(buttons, extra);
+  return box;
+}
+
 // ---------- composer ----------
 function renderComposer() {
   const view = CV;
@@ -1865,6 +2175,8 @@ function connectEvents() {
       case "messages":
       case "sent":
         if (CV && event.chat_id === CV.id) debounce("newest", () => loadNewest(false), 150);
+        // Brain groups messages for a few seconds before it starts; look again shortly after.
+        if (CV && CV.brain && event.chat_id === CV.id) scheduleBrain(CV, 3000);
         if (TV && event.chat_id === TV.chatId) debounce("topics", TV.load, 300);
         break;
       case "topics":

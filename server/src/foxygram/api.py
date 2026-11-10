@@ -3,14 +3,15 @@
 The browser client gets the same routes on the local-only control port, guarded there instead."""
 from __future__ import annotations
 
+import asyncio
 import hmac
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel
 
 from . import __version__
-from .brain import BrainError
+from .brain import BrainError, to_tdlib
 from .db import now
 from .service import Service
 
@@ -60,6 +61,27 @@ class MoveBody(BaseModel):
 class BrainJobBody(BaseModel):
     job_id: str
     on: bool
+
+
+class BrainDecision(BaseModel):
+    decision: Literal["approve", "reject", "answer", "dismiss"]
+    text: str | None = None
+    reason: str | None = None
+
+
+def brain_panel(chat: dict[str, Any], status: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
+    """What the side panel next to a chat shows. Message ids are turned into TDLib's, which the clients use."""
+    names = {job["id"]: job["name"] for job in chat.get("jobs") or []}
+    paused = {job["id"] for job in status.get("jobs") or [] if job.get("paused")}
+    items = []
+    for item in analysis.get("items") or []:
+        telegram_ids = [int(m) for m in item.get("messageIds") or []]
+        items.append({**item, "telegramMessageIds": telegram_ids, "messageIds": [to_tdlib(m) for m in telegram_ids]})
+    return {
+        "active": True,
+        "jobs": [{"id": job, "name": names.get(job, job), "paused": job in paused} for job in chat["chat"]["jobs"]],
+        "items": items,
+    }
 
 
 def _case_row(service: Service, case: dict[str, Any]) -> dict[str, Any]:
@@ -309,3 +331,17 @@ def add_v1_routes(app: FastAPI, service: Service, dependencies: list[Any]) -> No
     @app.post("/v1/brain/chats/{chat_id}/reset", **guarded)
     async def brain_reset(chat_id: int) -> dict[str, Any]:
         return await brain(service.brain.reset(chat_id))
+
+    @app.get("/v1/brain/chats/{chat_id}/panel", **guarded)
+    async def brain_chat_panel(chat_id: int, limit: int = 100) -> dict[str, Any]:
+        """Brain's side panel for a chat: only for chats in at least one of Brain's jobs."""
+        chat = await brain(service.brain.chat(chat_id))
+        if not (chat.get("chat") or {}).get("jobs"):
+            return {"active": False, "jobs": [], "items": []}
+        status, analysis = await brain(asyncio.gather(
+            service.brain.status(), service.brain.analysis(chat_id, max(1, min(limit, 500)))))
+        return brain_panel(chat, status, analysis)
+
+    @app.post("/v1/brain/actions/{action_id}/decide", **guarded)
+    async def brain_decide(action_id: int, body: BrainDecision) -> dict[str, Any]:
+        return await brain(service.brain.decide(action_id, body.decision, body.text, body.reason))
