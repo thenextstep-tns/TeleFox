@@ -914,27 +914,27 @@ function chatSheet(chat, list) {
 // Telegram folder brings the chat in, and "follow folders only" once the chat has changes of its own.
 function brainJobs(chat) {
   const body = h("div");
-  const box = h("div", {}, h("div", { class: "divider", style: "margin:6px 0" }), h("div", { class: "ptitle", text: "Работы в Brain" }), body);
+  const box = h("div", {}, h("div", { class: "divider", style: "margin:6px 0" }), h("div", { class: "ptitle", text: "Brain jobs" }), body);
   let data = null;
   const note = text => body.replaceChildren(h("div", { class: "brain-note", text }));
   const draw = () => {
     const c = data.chat;
-    if (!data.jobs.length) { note("В Brain нет включённых работ."); return; }
+    if (!data.jobs.length) { note("Brain has no jobs switched on."); return; }
     body.replaceChildren(...data.jobs.map(job => {
       const on = c.jobs.includes(job.id);
       const viaFolder = c.viaFolder.includes(job.id);
       const removed = c.removed.includes(job.id);
-      const hint = on && viaFolder ? "из папки" : removed ? "убран, хотя папка его добавляет" : "";
+      const hint = on && viaFolder ? "from a folder" : removed ? "taken out, although its folder adds it" : "";
       return h("div", { class: "srow", style: "cursor:default;padding:8px 20px" },
         h("div", { class: "grow" }, h("div", { text: job.name }), hint ? h("div", { class: "brain-hint", text: hint }) : null),
         switchEl(on, value => change(`/v1/brain/chats/${chat.id}/jobs`, { job_id: job.id, on: value })));
     }));
     if (c.added.length || c.removed.length) {
       body.append(h("div", { style: "padding:0 8px" },
-        h("button", { class: "tbtn", title: "Забыть изменения для этого чата", text: "Только по папкам",
+        h("button", { class: "tbtn", title: "Forget the changes made for this chat", text: "Follow folders only",
           onclick: () => change(`/v1/brain/chats/${chat.id}/reset`, {}) })));
     }
-    if (!data.connected) body.append(h("div", { class: "brain-note", text: "Brain сейчас не подключён к Telegram." }));
+    if (!data.connected) body.append(h("div", { class: "brain-note", text: "Brain isn't connected to Telegram right now." }));
   };
   async function change(path, payload) {
     try {
@@ -947,7 +947,7 @@ function brainJobs(chat) {
     }
   }
   async function load() {
-    if (!data) note("Загрузка…");
+    if (!data) note("Loading…");
     try { data = await api(`/v1/brain/chats/${chat.id}`); draw(); }
     catch (e) { data = null; note(e.message); }
   }
@@ -1636,9 +1636,9 @@ document.addEventListener("visibilitychange", scheduleRead);
 
 // ---------- Brain's side panel: what Brain decided about a message, and what it proposed ----------
 const BRAIN_STATUS = {
-  open: "Ждёт вашего решения", approved: "Одобрено, выполняется", executed: "Одобрено и выполнено",
-  failed: "Одобрено, но не получилось", rejected: "Отклонено: ничего не отправлено", answered: "Отвечено",
-  dismissed: "Скрыто: ничего не отправлено",
+  open: "Waiting for you", approved: "Approved, being carried out", executed: "Approved and carried out",
+  failed: "Approved, but it failed", rejected: "Rejected: nothing was sent", answered: "Answered",
+  dismissed: "Dismissed: nothing was sent",
 };
 const BRAIN_COLOR = { open: "var(--warning)", failed: "var(--danger)", executed: "var(--success)", answered: "var(--success)", approved: "var(--accent)" };
 S.brainChats = LS.get("brainChats", {});
@@ -1706,7 +1706,7 @@ function ensureBrainPanel(view) {
   view.panelBody = h("div", { class: "bp-body" });
   view.panelTitle = h("div", { class: "bp-title", text: "Brain" });
   view.panel = h("aside", { class: "bpanel" + (matchMedia("(min-width: 1280px)").matches ? "" : " closed") },
-    h("div", { class: "bp-head" }, view.panelTitle, iconButton("close", "Скрыть панель", () => toggleBrainPanel(view, false), "dim")),
+    h("div", { class: "bp-head" }, view.panelTitle, iconButton("close", "Hide panel", () => toggleBrainPanel(view, false), "dim")),
     view.panelBody);
   view.wrap.append(view.panel);
   return true;
@@ -1769,7 +1769,7 @@ function applyBrainMarks(view) {
     if (mark.dataset.kind !== kind || !mark.childElementCount) {
       mark.dataset.kind = kind;
       mark.className = "bmark" + (kind && kind !== "working" ? " " + kind : "");
-      mark.title = state.working ? "Brain разбирает это сообщение…" : state.open ? "Brain ждёт вашего решения" : "Brain разобрал это сообщение";
+      mark.title = state.working ? "Brain is reading this message…" : state.open ? "Brain is waiting for your decision" : "Brain has read this message";
       mark.replaceChildren(state.working ? h("span", { class: "spin-sm" }) : icon("robot", 14));
     }
   }
@@ -1782,36 +1782,36 @@ function renderBrainPanel(view) {
   const kids = [];
   if (view.brainError) kids.push(h("div", { class: "bp-banner", text: view.brainError }));
   for (const job of brain.jobs.filter(j => j.paused)) {
-    kids.push(h("div", { class: "bp-banner", text: `Работа «${job.name}» на паузе: новые сообщения не анализируются.` }));
+    kids.push(h("div", { class: "bp-banner", text: `Job "${job.name}" is paused: new messages aren't being analysed.` }));
   }
   const selected = view.brainSelected;
   if (selected && selected.length) {
     const message = selected.map(id => view.msgs.get(id)).find(Boolean);
     const items = brain.items.filter(item => item.messageIds.some(id => selected.includes(id)));
-    kids.push(h("div", { class: "bp-sub", text: "Сообщение" }));
+    kids.push(h("div", { class: "bp-sub", text: "Message" }));
     if (message) {
-      const who = message.out ? "Вы" : message.sender ? message.sender.name : (view.chat ? view.chat.title : "");
+      const who = message.out ? "You" : message.sender ? message.sender.name : (view.chat ? view.chat.title : "");
       kids.push(h("div", { class: "bp-msg" },
         h("div", { class: "who", text: `${who} · ${clock(message.date)}` }),
-        h("div", { class: "txt2", text: textOf(message) || "(без текста)" })));
+        h("div", { class: "txt2", text: textOf(message) || "(no text)" })));
     }
     if (!items.length) {
       const paused = brain.jobs.some(j => j.paused);
       const waiting = (brain.waiting || []).some(id => selected.includes(id));
       const fresh = !!message && Date.now() / 1000 - message.date < 120;
       if (waiting || (fresh && !paused)) {
-        kids.push(h("div", { class: "bp-hint" }, h("span", { class: "spin-sm" }), " Brain разбирает это сообщение… Обычно это занимает до минуты."));
+        kids.push(h("div", { class: "bp-hint" }, h("span", { class: "spin-sm" }), " Brain is reading this message… This usually takes up to a minute."));
       } else {
-        kids.push(h("div", { class: "bp-hint", text: "Brain не разбирал это сообщение." + (paused ? " Пока работа на паузе, новые сообщения не разбираются." : "") }));
+        kids.push(h("div", { class: "bp-hint", text: "Brain didn't analyse this message." + (paused ? " While the job is paused, new messages aren't analysed." : "") }));
       }
     }
     for (const item of items) kids.push(brainRun(view, item, false));
-    kids.push(h("button", { class: "tbtn", style: "margin-left:-12px", text: "Все разборы в этом чате",
+    kids.push(h("button", { class: "tbtn", style: "margin-left:-12px", text: "All analyses in this chat",
       onclick: () => { view.brainSelected = null; renderBrainPanel(view); applyBrainMarks(view); } }));
   } else {
-    kids.push(h("div", { class: "bp-hint", text: "Нажмите на сообщение, чтобы увидеть, что решил Brain и что он предлагает сделать." }));
-    if (!brain.items.length) kids.push(h("div", { class: "bp-hint", text: "В этом чате Brain пока ничего не разбирал." }));
-    else kids.push(h("div", { class: "bp-sub", text: "Последние разборы" }), ...brain.items.slice(0, 30).map(item => brainRun(view, item, true)));
+    kids.push(h("div", { class: "bp-hint", text: "Click a message to see what Brain decided and what it proposes." }));
+    if (!brain.items.length) kids.push(h("div", { class: "bp-hint", text: "Brain hasn't analysed anything in this chat yet." }));
+    else kids.push(h("div", { class: "bp-sub", text: "Latest analyses" }), ...brain.items.slice(0, 30).map(item => brainRun(view, item, true)));
   }
   view.panelBody.replaceChildren(...kids);
 }
@@ -1819,24 +1819,24 @@ function brainRun(view, item, withJump) {
   const run = h("div", { class: "brun" });
   run.append(h("div", { class: "brun-top" },
     labelPill(item.jobName, "var(--accent)"),
-    h("span", { text: `разбор №${item.runId} · ${brainTime(item.at)}` }),
-    item.working ? h("span", { class: "working" }, h("span", { class: "spin-sm" }), "Работает…")
-      : item.status === "error" ? labelPill("Ошибка", "var(--danger)") : null));
+    h("span", { text: `run #${item.runId} · ${brainTime(item.at)}` }),
+    item.working ? h("span", { class: "working" }, h("span", { class: "spin-sm" }), "Working…")
+      : item.status === "error" ? labelPill("Error", "var(--danger)") : null));
   if (withJump && item.messageIds.length) {
     const count = item.messageIds.length;
     run.append(h("button", { class: "tbtn", style: "margin:2px 0 0 -12px;padding:4px 12px",
-      text: count > 1 ? `К сообщениям (${count})` : "К сообщению",
+      text: count > 1 ? `Go to messages (${count})` : "Go to message",
       onclick: () => { selectBrainMessage(view, item.messageIds); jumpTo(item.messageIds[0]); } }));
   }
   if (item.decisions.length) {
-    run.append(h("div", { class: "brun-label", text: "Решение" }), ...item.decisions.map(d => h("div", { class: "brun-text", text: d.text })));
+    run.append(h("div", { class: "brun-label", text: "Decision" }), ...item.decisions.map(d => h("div", { class: "brun-text", text: d.text })));
   } else if (item.working) {
-    run.append(h("div", { class: "brun-text", style: "color:var(--text2)", text: "Brain разбирает сообщения…" }));
+    run.append(h("div", { class: "brun-text", style: "color:var(--text2)", text: "Brain is reading the messages…" }));
   }
   if (item.actions.length) {
-    run.append(h("div", { class: "brun-label", text: "Предлагает" }), ...item.actions.map(action => brainAction(view, action)));
+    run.append(h("div", { class: "brun-label", text: "Proposes" }), ...item.actions.map(action => brainAction(view, action)));
   } else if (!item.working && item.decisions.length) {
-    run.append(h("div", { class: "brun-sum", text: "Ничего не предлагает." }));
+    run.append(h("div", { class: "brun-sum", text: "Proposes nothing." }));
   }
   if (item.summary && !item.working) run.append(h("div", { class: "brun-sum", title: item.summary, text: item.summary }));
   return run;
@@ -1844,17 +1844,17 @@ function brainRun(view, item, withJump) {
 function brainAction(view, action) {
   const card = h("div", { class: "bact" });
   const question = action.kind === "escalation";
-  card.append(h("div", { class: "bact-kind", text: question ? "Вопрос к вам" : `Действие: ${action.actionType || "—"}` }));
-  if (action.to) card.append(h("div", { class: "bact-line" }, "Кому: ", h("b", { text: action.to })));
+  card.append(h("div", { class: "bact-kind", text: question ? "Question for you" : `Action: ${action.actionType || "—"}` }));
+  if (action.to) card.append(h("div", { class: "bact-line" }, "To: ", h("b", { text: action.to })));
   if (question && action.question) card.append(h("div", { class: "brun-text", text: action.question }));
   if (action.text) card.append(h("div", { class: "bact-text", text: action.text }));
   if (question && action.options && action.options.length && action.status !== "open") {
-    card.append(h("div", { class: "bact-line", style: "color:var(--text2)", text: "Варианты: " + action.options.join(" · ") }));
+    card.append(h("div", { class: "bact-line", style: "color:var(--text2)", text: "Options: " + action.options.join(" · ") }));
   }
   card.append(h("div", { class: "bact-status", style: `color:${BRAIN_COLOR[action.status] || "var(--text2)"}`,
     text: BRAIN_STATUS[action.status] || action.statusText || action.status }));
-  if (action.answer) card.append(h("div", { class: "bact-line" }, "Ваш ответ: ", h("b", { text: action.answer })));
-  if (action.reason) card.append(h("div", { class: "bact-line", style: "color:var(--text2)", text: "Пояснение: " + action.reason }));
+  if (action.answer) card.append(h("div", { class: "bact-line" }, "Your answer: ", h("b", { text: action.answer })));
+  if (action.reason) card.append(h("div", { class: "bact-line", style: "color:var(--text2)", text: "Why: " + action.reason }));
   if (action.result) card.append(h("div", { class: "bact-line", style: "color:var(--text2)", text: action.result }));
   if (action.status === "open") card.append(brainControls(view, action));
   return card;
@@ -1868,9 +1868,9 @@ function brainControls(view, action) {
     if (box.contains(document.activeElement)) document.activeElement.blur();
     try {
       const result = await post(`/v1/brain/actions/${action.id}/decide`, body);
-      toast(result.text || "Готово");
+      toast(result.text || "Done");
     } catch (e) {
-      toast("Не удалось: " + e.message);
+      toast("Didn't work: " + e.message);
     }
     loadBrainPanel(view);
   };
@@ -1881,33 +1881,33 @@ function brainControls(view, action) {
   };
   if (action.kind === "escalation") {
     for (const option of action.options || []) box.append(h("button", { class: "bopt", text: option, onclick: () => send({ decision: "answer", text: option }) }));
-    const answer = input("Свой ответ");
+    const answer = input("Your own answer");
     box.append(answer, h("div", { class: "bact-buttons" },
-      h("button", { class: "tbtn", text: "Ответить", onclick: () => { if (answer.value.trim()) send({ decision: "answer", text: answer.value.trim() }); else answer.focus(); } }),
-      h("button", { class: "tbtn dim", text: "Скрыть", onclick: () => send({ decision: "dismiss" }) })));
+      h("button", { class: "tbtn", text: "Answer", onclick: () => { if (answer.value.trim()) send({ decision: "answer", text: answer.value.trim() }); else answer.focus(); } }),
+      h("button", { class: "tbtn dim", text: "Dismiss", onclick: () => send({ decision: "dismiss" }) })));
     return box;
   }
   const buttons = h("div", { class: "bact-buttons" });
   const extra = h("div");
   buttons.append(
-    h("button", { class: "tbtn", text: "Одобрить", onclick: () => {
-      if (confirm(`Brain выполнит это действие${action.to ? ` (${action.to})` : ""}:\n\n${action.text || action.actionType}\n\nОдобрить?`)) send({ decision: "approve" });
+    h("button", { class: "tbtn", text: "Approve", onclick: () => {
+      if (confirm(`Brain will carry out this action${action.to ? ` (${action.to})` : ""}:\n\n${action.text || action.actionType}\n\nApprove?`)) send({ decision: "approve" });
     } }),
-    h("button", { class: "tbtn", text: "Изменить", onclick: () => {
-      const edited = input("Текст", action.text || "");
+    h("button", { class: "tbtn", text: "Edit", onclick: () => {
+      const edited = input("Text", action.text || "");
       extra.replaceChildren(edited, h("div", { class: "bact-buttons" },
-        h("button", { class: "tbtn", text: "Одобрить с изменениями", onclick: () => {
-          if (edited.value.trim() && confirm(`Отправить так?\n\n${edited.value.trim()}`)) send({ decision: "approve", text: edited.value.trim() });
+        h("button", { class: "tbtn", text: "Approve with changes", onclick: () => {
+          if (edited.value.trim() && confirm(`Send it like this?\n\n${edited.value.trim()}`)) send({ decision: "approve", text: edited.value.trim() });
         } })));
       edited.focus();
     } }),
-    h("button", { class: "tbtn danger", text: "Отклонить", onclick: () => {
-      const reason = input("Почему (необязательно) — Brain это учтёт");
+    h("button", { class: "tbtn danger", text: "Reject", onclick: () => {
+      const reason = input("Why (optional), Brain takes it into account");
       extra.replaceChildren(reason, h("div", { class: "bact-buttons" },
-        h("button", { class: "tbtn danger", text: "Отклонить", onclick: () => send({ decision: "reject", reason: reason.value.trim() || undefined }) })));
+        h("button", { class: "tbtn danger", text: "Reject", onclick: () => send({ decision: "reject", reason: reason.value.trim() || undefined }) })));
       reason.focus();
     } }),
-    h("button", { class: "tbtn dim", text: "Скрыть", onclick: () => send({ decision: "dismiss" }) }));
+    h("button", { class: "tbtn dim", text: "Dismiss", onclick: () => send({ decision: "dismiss" }) }));
   box.append(buttons, extra);
   return box;
 }

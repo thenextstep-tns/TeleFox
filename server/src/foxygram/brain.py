@@ -35,11 +35,11 @@ class BrainError(Exception):
         self.message = message
 
 
-NOT_RUNNING = "Brain не запущен на этом компьютере. Запустите Brain и попробуйте снова."
-NO_TOKEN = ("Не найден токен Brain. FoxyGram ищет BRAIN_TOKEN в {path}; "
-            "можно и вписать его в [brain] token в config.toml сервера.")
-BAD_TOKEN = "Brain не принял токен. Проверьте BRAIN_TOKEN в .env Brain или в config.toml сервера FoxyGram."
-SLOW = "Brain не ответил вовремя. Попробуйте ещё раз."
+NOT_RUNNING = "Brain isn't running on this computer. Start Brain and try again."
+NO_TOKEN = ("Brain's token wasn't found. FoxyGram looks for BRAIN_TOKEN in {path}; "
+            "you can also put it in [brain] token in the server's config.toml.")
+BAD_TOKEN = "Brain refused the token. Check BRAIN_TOKEN in Brain's .env or in the FoxyGram server's config.toml."
+SLOW = "Brain didn't answer in time. Try again."
 # Brain is on this PC, so a system proxy must never be in the way.
 DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -125,4 +125,4 @@ def _from_http(error: urllib.error.HTTPError) -> BrainError:
         return BrainError(503, NOT_RUNNING)
     if error.code == 400 and message:
         return BrainError(400, message)
-    return BrainError(502, f"Brain ответил ошибкой {error.code}. {message}".strip())
+    return BrainError(502, f"Brain answered with error {error.code}. {message}".strip())

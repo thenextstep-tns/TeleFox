@@ -55,13 +55,13 @@ import java.util.Locale
 val LocalBrainMarks = compositionLocalOf<Map<Long, BrainMark>> { emptyMap() }
 
 private val STATUS = mapOf(
-    "open" to "Ждёт вашего решения",
-    "approved" to "Одобрено, выполняется",
-    "executed" to "Одобрено и выполнено",
-    "failed" to "Одобрено, но не получилось",
-    "rejected" to "Отклонено: ничего не отправлено",
-    "answered" to "Отвечено",
-    "dismissed" to "Скрыто: ничего не отправлено",
+    "open" to "Waiting for you",
+    "approved" to "Approved, being carried out",
+    "executed" to "Approved and carried out",
+    "failed" to "Approved, but it failed",
+    "rejected" to "Rejected: nothing was sent",
+    "answered" to "Answered",
+    "dismissed" to "Dismissed: nothing was sent",
 )
 
 private val ru = Locale.forLanguageTag("ru")
@@ -124,13 +124,13 @@ fun BrainPanelContent(
         }
         Spacer(Modifier.height(10.dp))
         if (error != null) Banner(error)
-        panel?.pausedJobs?.forEach { Banner("Работа «${it.name}» на паузе: новые сообщения не анализируются.") }
+        panel?.pausedJobs?.forEach { Banner("Job \"${it.name}\" is paused: new messages aren't being analysed.") }
         if (panel == null) {
-            if (error == null) Hint("Загрузка…")
+            if (error == null) Hint("Loading…")
             return@Column
         }
         if (selectedIds != null) {
-            Label("Сообщение")
+            Label("Message")
             if (preview != null) {
                 Row(Modifier.fillMaxWidth().padding(bottom = 10.dp).clip(RoundedCornerShape(6.dp)).background(colors.accentSoft).height(IntrinsicSize.Min)) {
                     Box(Modifier.width(3.dp).fillMaxHeight().background(colors.accent))
@@ -143,19 +143,19 @@ fun BrainPanelContent(
             val runs = panel.runsFor(selectedIds)
             if (runs.isEmpty()) {
                 if (panel.isWaiting(selectedIds)) {
-                    Hint("Brain разбирает это сообщение… Обычно это занимает до минуты.")
+                    Hint("Brain is reading this message… This usually takes up to a minute.")
                 } else {
-                    Hint("Brain не разбирал это сообщение." + if (panel.pausedJobs.isNotEmpty()) " Пока работа на паузе, новые сообщения не разбираются." else "")
+                    Hint("Brain didn't analyse this message." + if (panel.pausedJobs.isNotEmpty()) " While the job is paused, new messages aren't analysed." else "")
                 }
             }
             runs.forEach { RunCard(it, null, onDecide) }
-            TextButton(onShowAll, Modifier.padding(start = 0.dp)) { Text("Все разборы в этом чате", color = colors.accent) }
+            TextButton(onShowAll, Modifier.padding(start = 0.dp)) { Text("All analyses in this chat", color = colors.accent) }
         } else {
-            Hint("Нажмите на сообщение, чтобы увидеть, что решил Brain и что он предлагает сделать.")
+            Hint("Tap a message to see what Brain decided and what it proposes.")
             if (panel.items.isEmpty()) {
-                Hint("В этом чате Brain пока ничего не разбирал.")
+                Hint("Brain hasn't analysed anything in this chat yet.")
             } else {
-                Label("Последние разборы")
+                Label("Latest analyses")
                 panel.items.take(20).forEach { RunCard(it, onJump, onDecide) }
             }
         }
@@ -195,34 +195,34 @@ private fun RunCard(run: BrainRun, onJump: ((BrainRun) -> Unit)?, onDecide: (Bra
     Column(Modifier.fillMaxWidth().padding(bottom = 10.dp).clip(RoundedCornerShape(12.dp)).background(colors.background).padding(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             LabelPill(run.jobName, colors.accent)
-            Text("разбор №${run.runId} · ${brainTime(run.at)}", color = colors.textSecondary, fontSize = 13.sp, maxLines = 1)
+            Text("run #${run.runId} · ${brainTime(run.at)}", color = colors.textSecondary, fontSize = 13.sp, maxLines = 1)
             when {
                 run.working -> Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(12.dp), color = colors.accent, strokeWidth = 2.dp)
                     Spacer(Modifier.width(5.dp))
-                    Text("Работает…", color = colors.accent, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Text("Working…", color = colors.accent, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                 }
-                run.status == "error" -> LabelPill("Ошибка", colors.danger)
+                run.status == "error" -> LabelPill("Error", colors.danger)
             }
         }
         if (onJump != null && run.messageIds.isNotEmpty()) {
             val count = run.messageIds.size
             Text(
-                if (count > 1) "К сообщениям ($count)" else "К сообщению", color = colors.accent, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                if (count > 1) "Go to messages ($count)" else "Go to message", color = colors.accent, fontSize = 14.sp, fontWeight = FontWeight.Medium,
                 modifier = Modifier.padding(top = 6.dp).clickable { onJump(run) },
             )
         }
         if (run.decisions.isNotEmpty()) {
-            SectionLabel("Решение")
+            SectionLabel("Decision")
             run.decisions.forEach { Text(it, color = colors.text, fontSize = 15.sp, modifier = Modifier.padding(top = 4.dp)) }
         } else if (run.working) {
-            Text("Brain разбирает сообщения…", color = colors.textSecondary, fontSize = 15.sp, modifier = Modifier.padding(top = 6.dp))
+            Text("Brain is reading the messages…", color = colors.textSecondary, fontSize = 15.sp, modifier = Modifier.padding(top = 6.dp))
         }
         if (run.actions.isNotEmpty()) {
-            SectionLabel("Предлагает")
+            SectionLabel("Proposes")
             run.actions.forEach { ActionCard(it, onDecide) }
         } else if (!run.working && run.decisions.isNotEmpty()) {
-            Text("Ничего не предлагает.", color = colors.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+            Text("Proposes nothing.", color = colors.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
         }
         if (run.summary.isNotBlank() && !run.working) {
             Text(run.summary, color = colors.textSecondary, fontSize = 13.sp, maxLines = 5, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
@@ -241,19 +241,19 @@ private fun ActionCard(action: BrainAction, onDecide: (BrainAction, String, Stri
         else -> colors.textSecondary
     }
     Column(Modifier.fillMaxWidth().padding(top = 8.dp).border(1.dp, colors.border, RoundedCornerShape(10.dp)).padding(10.dp)) {
-        Text(if (action.isQuestion) "Вопрос к вам" else "Действие: ${action.actionType.ifBlank { "—" }}", color = colors.textSecondary, fontSize = 13.sp)
-        action.to?.let { Text("Кому: $it", color = colors.text, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 2.dp)) }
+        Text(if (action.isQuestion) "Question for you" else "Action: ${action.actionType.ifBlank { "—" }}", color = colors.textSecondary, fontSize = 13.sp)
+        action.to?.let { Text("To: $it", color = colors.text, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 2.dp)) }
         if (action.isQuestion) action.question?.let { Text(it, color = colors.text, fontSize = 15.sp, modifier = Modifier.padding(top = 4.dp)) }
         action.text?.let {
             Text(it, color = colors.text, fontSize = 15.sp, modifier = Modifier.fillMaxWidth().padding(top = 6.dp).clip(RoundedCornerShape(8.dp))
                 .background(colors.bubbleOut).padding(horizontal = 10.dp, vertical = 8.dp))
         }
         if (action.isQuestion && action.options.isNotEmpty() && !action.isOpen) {
-            Text("Варианты: " + action.options.joinToString(" · "), color = colors.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+            Text("Options: " + action.options.joinToString(" · "), color = colors.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
         }
         Text(STATUS[action.status] ?: action.status, color = statusColor, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 6.dp))
-        action.answer?.let { Text("Ваш ответ: $it", color = colors.text, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)) }
-        action.reason?.let { Text("Пояснение: $it", color = colors.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)) }
+        action.answer?.let { Text("Your answer: $it", color = colors.text, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)) }
+        action.reason?.let { Text("Why: $it", color = colors.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)) }
         action.result?.let { Text(it, color = colors.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)) }
         if (action.isOpen) Controls(action, onDecide)
     }
@@ -279,43 +279,43 @@ private fun Controls(action: BrainAction, onDecide: (BrainAction, String, String
             }
         }
         var answer by remember(action.id) { mutableStateOf("") }
-        OutlinedTextField(answer, { answer = it }, Modifier.fillMaxWidth().padding(top = 6.dp), placeholder = { Text("Свой ответ") }, minLines = 2)
+        OutlinedTextField(answer, { answer = it }, Modifier.fillMaxWidth().padding(top = 6.dp), placeholder = { Text("Your own answer") }, minLines = 2)
         Row {
-            TextButton({ if (answer.isNotBlank()) onDecide(action, "answer", answer.trim(), null) }) { Text("Ответить", color = colors.accent) }
-            TextButton({ onDecide(action, "dismiss", null, null) }) { Text("Скрыть", color = colors.textSecondary) }
+            TextButton({ if (answer.isNotBlank()) onDecide(action, "answer", answer.trim(), null) }) { Text("Answer", color = colors.accent) }
+            TextButton({ onDecide(action, "dismiss", null, null) }) { Text("Dismiss", color = colors.textSecondary) }
         }
         return
     }
 
     FlowRow(Modifier.padding(top = 2.dp)) {
-        TextButton({ confirm = action.text.orEmpty() }) { Text("Одобрить", color = colors.accent) }
-        TextButton({ mode = "edit" }) { Text("Изменить", color = colors.accent) }
-        TextButton({ mode = "reject" }) { Text("Отклонить", color = colors.danger) }
-        TextButton({ onDecide(action, "dismiss", null, null) }) { Text("Скрыть", color = colors.textSecondary) }
+        TextButton({ confirm = action.text.orEmpty() }) { Text("Approve", color = colors.accent) }
+        TextButton({ mode = "edit" }) { Text("Edit", color = colors.accent) }
+        TextButton({ mode = "reject" }) { Text("Reject", color = colors.danger) }
+        TextButton({ onDecide(action, "dismiss", null, null) }) { Text("Dismiss", color = colors.textSecondary) }
     }
     when (mode) {
         "edit" -> {
-            OutlinedTextField(draft, { draft = it }, Modifier.fillMaxWidth(), label = { Text("Текст") }, minLines = 2)
-            TextButton({ if (draft.isNotBlank()) confirm = draft.trim() }) { Text("Одобрить с изменениями", color = colors.accent) }
+            OutlinedTextField(draft, { draft = it }, Modifier.fillMaxWidth(), label = { Text("Text") }, minLines = 2)
+            TextButton({ if (draft.isNotBlank()) confirm = draft.trim() }) { Text("Approve with changes", color = colors.accent) }
         }
         "reject" -> {
             var reason by remember(action.id) { mutableStateOf("") }
-            OutlinedTextField(reason, { reason = it }, Modifier.fillMaxWidth(), placeholder = { Text("Почему (необязательно)") }, minLines = 2)
-            TextButton({ onDecide(action, "reject", null, reason.trim().ifBlank { null }) }) { Text("Отклонить", color = colors.danger) }
+            OutlinedTextField(reason, { reason = it }, Modifier.fillMaxWidth(), placeholder = { Text("Why (optional)") }, minLines = 2)
+            TextButton({ onDecide(action, "reject", null, reason.trim().ifBlank { null }) }) { Text("Reject", color = colors.danger) }
         }
     }
     confirm?.let { text ->
         AlertDialog(
             onDismissRequest = { confirm = null },
-            title = { Text("Одобрить?") },
-            text = { Text((action.to?.let { "Кому: $it\n\n" } ?: "") + text.ifBlank { action.actionType }) },
+            title = { Text("Approve?") },
+            text = { Text((action.to?.let { "To: $it\n\n" } ?: "") + text.ifBlank { action.actionType }) },
             confirmButton = {
                 TextButton({
                     confirm = null
                     onDecide(action, "approve", text.takeIf { mode == "edit" }, null)
-                }) { Text("Одобрить", color = colors.accent) }
+                }) { Text("Approve", color = colors.accent) }
             },
-            dismissButton = { TextButton({ confirm = null }) { Text("Отмена") } },
+            dismissButton = { TextButton({ confirm = null }) { Text("Cancel") } },
             containerColor = colors.surface,
         )
     }

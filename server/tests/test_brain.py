@@ -130,7 +130,7 @@ async def test_problems_come_back_in_plain_words(brain_url, tmp_path):
 
     with pytest.raises(BrainError) as refused:
         await Brain(BrainConfig(url=brain_url, token="wrong")).chat(1)
-    assert refused.value.status == 502 and "токен" in refused.value.message
+    assert refused.value.status == 502 and "token" in refused.value.message
 
     with pytest.raises(BrainError) as bad_job:
         await Brain(BrainConfig(url=brain_url, token=TOKEN)).assign(1, "nope", True)
@@ -138,7 +138,7 @@ async def test_problems_come_back_in_plain_words(brain_url, tmp_path):
 
     with pytest.raises(BrainError) as down:
         await Brain(BrainConfig(url="http://127.0.0.1:9", token=TOKEN)).chat(1)
-    assert down.value.status == 503 and "не запущен" in down.value.message
+    assert down.value.status == 503 and "isn't running" in down.value.message
 
 
 async def test_the_phone_changes_jobs_through_the_server(service, brain_url, brain_env):
@@ -185,7 +185,7 @@ async def test_a_stopped_brain_is_reported_not_crashed(service):
     headers = {"Authorization": f"Bearer {service.config.secrets.api_token}"}
     async with httpx.AsyncClient(transport=transport, base_url="http://x", headers=headers) as phone:
         response = await phone.get("/v1/brain/chats/1")
-    assert response.status_code == 503 and "Brain не запущен" in response.json()["detail"]
+    assert response.status_code == 503 and "Brain isn't running" in response.json()["detail"]
 
 
 def test_telegram_message_ids_become_tdlibs():

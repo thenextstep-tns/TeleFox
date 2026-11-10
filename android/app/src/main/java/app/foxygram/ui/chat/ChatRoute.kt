@@ -305,7 +305,7 @@ fun ChatRoute(telegram: Telegram, chatId: Long, onBack: () -> Unit, navigate: (R
                     selected = null
                 }
                 if (brain != null) {
-                    ActionRow(Icons.Filled.SmartToy, "Что решил Brain") {
+                    ActionRow(Icons.Filled.SmartToy, "What Brain decided") {
                         brainMessage = item
                         brainOpen = true
                         selected = null
@@ -530,5 +530,5 @@ class VoiceRecorder(private val context: Context) {
 private fun brainPreview(item: MessageItem, chatTitle: String): BrainMessagePreview {
     val who = if (item.outgoing) "Вы" else item.sender?.name ?: chatTitle
     val text = (item.body as? MessageBody.Text)?.text?.text ?: item.body.caption.text
-    return BrainMessagePreview(who, clockTime(item.date), text.ifBlank { "(без текста)" })
+    return BrainMessagePreview(who, clockTime(item.date), text.ifBlank { "(no text)" })
 }

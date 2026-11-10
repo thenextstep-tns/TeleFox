@@ -357,7 +357,7 @@ private fun BrainJobsSection(api: ServerApi, chatId: Long) {
     LaunchedEffect(chatId) {
         runCatching { api.brainJobs(chatId) }
             .onSuccess { state = it }
-            .onFailure { problem = it.message ?: "Brain недоступен" }
+            .onFailure { problem = it.message ?: "Brain isn't reachable" }
     }
 
     fun change(block: suspend () -> BrainChange) {
@@ -370,7 +370,7 @@ private fun BrainJobsSection(api: ServerApi, chatId: Long) {
                     if (result.text.isNotBlank()) Toast.makeText(context, result.text, Toast.LENGTH_SHORT).show()
                 }
                 .onFailure { failure ->
-                    Toast.makeText(context, failure.message ?: "Не удалось", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, failure.message ?: "Didn't work", Toast.LENGTH_LONG).show()
                     runCatching { api.brainJobs(chatId) }.onSuccess { state = it }
                 }
             busy = false
@@ -378,19 +378,19 @@ private fun BrainJobsSection(api: ServerApi, chatId: Long) {
     }
 
     HorizontalDivider(color = colors.border, thickness = 0.5.dp, modifier = Modifier.padding(top = 12.dp))
-    PickerTitle("Работы в Brain")
+    PickerTitle("Brain jobs")
     val current = state
     val failure = problem
     when {
         failure != null -> BrainNote(failure)
-        current == null -> BrainNote("Загрузка…")
-        current.jobs.isEmpty() -> BrainNote("В Brain нет включённых работ.")
+        current == null -> BrainNote("Loading…")
+        current.jobs.isEmpty() -> BrainNote("Brain has no jobs switched on.")
         else -> {
             current.jobs.forEach { job ->
                 val on = job.id in current.chat.jobs
                 val hint = when {
-                    on && job.id in current.chat.viaFolder -> "из папки"
-                    job.id in current.chat.removed -> "убран, хотя папка его добавляет"
+                    on && job.id in current.chat.viaFolder -> "from a folder"
+                    job.id in current.chat.removed -> "taken out, although its folder adds it"
                     else -> null
                 }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -403,10 +403,10 @@ private fun BrainJobsSection(api: ServerApi, chatId: Long) {
             }
             if (current.chat.added.isNotEmpty() || current.chat.removed.isNotEmpty()) {
                 TextButton({ change { api.resetBrainJobs(chatId) } }, Modifier.padding(horizontal = 8.dp), enabled = !busy) {
-                    Text("Только по папкам", color = colors.accent)
+                    Text("Follow folders only", color = colors.accent)
                 }
             }
-            if (!current.connected) BrainNote("Brain сейчас не подключён к Telegram.")
+            if (!current.connected) BrainNote("Brain isn't connected to Telegram right now.")
         }
     }
 }
