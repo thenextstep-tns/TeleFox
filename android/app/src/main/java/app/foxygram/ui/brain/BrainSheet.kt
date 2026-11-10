@@ -62,6 +62,7 @@ private val STATUS = mapOf(
     "rejected" to "Rejected: nothing was sent",
     "answered" to "Answered",
     "dismissed" to "Dismissed: nothing was sent",
+    "not_sent" to "Not sent: sending is off for this chat",
 )
 
 private val ru = Locale.forLanguageTag("ru")
@@ -125,6 +126,7 @@ fun BrainPanelContent(
         Spacer(Modifier.height(10.dp))
         if (error != null) Banner(error)
         panel?.pausedJobs?.forEach { Banner("Job \"${it.name}\" is paused: new messages aren't being analysed.") }
+        if (panel?.sending == false) Banner("Sending is off for this chat: Brain only shows what it would have answered and sends nothing.")
         if (panel == null) {
             if (error == null) Hint("Loading…")
             return@Column
@@ -234,14 +236,19 @@ private fun RunCard(run: BrainRun, onJump: ((BrainRun) -> Unit)?, onDecide: (Bra
 private fun ActionCard(action: BrainAction, onDecide: (BrainAction, String, String?, String?) -> Unit) {
     val colors = Foxy.colors
     val statusColor = when (action.status) {
-        "open" -> colors.warning
+        "open", "not_sent" -> colors.warning
         "failed" -> colors.danger
         "executed", "answered" -> colors.success
         "approved" -> colors.accent
         else -> colors.textSecondary
     }
     Column(Modifier.fillMaxWidth().padding(top = 8.dp).border(1.dp, colors.border, RoundedCornerShape(10.dp)).padding(10.dp)) {
-        Text(if (action.isQuestion) "Question for you" else "Action: ${action.actionType.ifBlank { "—" }}", color = colors.textSecondary, fontSize = 13.sp)
+        val kind = when {
+            action.isQuestion -> "Question for you"
+            action.isUnsent -> "Would have sent"
+            else -> "Action: ${action.actionType.ifBlank { "—" }}"
+        }
+        Text(kind, color = colors.textSecondary, fontSize = 13.sp)
         action.to?.let { Text("To: $it", color = colors.text, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 2.dp)) }
         if (action.isQuestion) action.question?.let { Text(it, color = colors.text, fontSize = 15.sp, modifier = Modifier.padding(top = 4.dp)) }
         action.text?.let {
@@ -254,7 +261,7 @@ private fun ActionCard(action: BrainAction, onDecide: (BrainAction, String, Stri
         Text(STATUS[action.status] ?: action.status, color = statusColor, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 6.dp))
         action.answer?.let { Text("Your answer: $it", color = colors.text, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)) }
         action.reason?.let { Text("Why: $it", color = colors.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)) }
-        action.result?.let { Text(it, color = colors.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)) }
+        if (!action.isUnsent) action.result?.let { Text(it, color = colors.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)) }
         if (action.isOpen) Controls(action, onDecide)
     }
 }

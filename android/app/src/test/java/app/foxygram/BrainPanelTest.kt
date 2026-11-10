@@ -78,13 +78,24 @@ class BrainPanelTest {
         assertTrue(!parseBrainPanel(PANEL.replace("\"working\": true", "\"working\": false")).busy)
     }
 
+    @Test fun aChatWithSendingOffShowsWhatBrainWouldHaveSent() {
+        assertTrue(parseBrainPanel(PANEL).sending)
+        val off = parseBrainPanel(PANEL.replace("\"active\": true,", "\"active\": true, \"sending\": false,")
+            .replace("\"status\": \"open\", \"statusText\": \"Waiting for you\",\n     \"to\": \"Test Group\"",
+                "\"status\": \"not_sent\", \"statusText\": \"Not sent\",\n     \"to\": \"Test Group\""))
+        assertTrue(!off.sending)
+        val draft = off.items[1].actions.single()
+        assertTrue(draft.isUnsent && !draft.isOpen)
+        assertEquals(BrainMark.Done, off.marks()[101L shl 20])
+    }
+
     @Test fun brainTimesAreLocal() {
         assertEquals("", brainTime("not a time"))
         assertTrue(brainTime("2026-11-10 18:31:18").endsWith("18:31"))
     }
 
-    private fun shot(mode: ThemeMode, name: String, selected: List<Long>?) {
-        val panel = parseBrainPanel(PANEL)
+    private fun shot(mode: ThemeMode, name: String, selected: List<Long>?, json: String = PANEL) {
+        val panel = parseBrainPanel(json)
         rule.setContent {
             FoxyTheme(mode) {
                 Box(Modifier.background(Foxy.colors.surface).padding(top = 16.dp)) {
@@ -105,4 +116,8 @@ class BrainPanelTest {
 
     @Test fun sheetForAMessageDark() = shot(ThemeMode.Dark, "brain_message_dark", listOf(101L shl 20))
     @Test fun sheetForTheChatLight() = shot(ThemeMode.Light, "brain_chat_light", null)
+    @Test fun sheetWithSendingOff() = shot(ThemeMode.Light, "brain_sending_off", listOf(101L shl 20),
+        PANEL.replace("\"active\": true,", "\"active\": true, \"sending\": false,")
+            .replace("\"status\": \"open\", \"statusText\": \"Waiting for you\",\n     \"to\": \"Test Group\"",
+                "\"status\": \"not_sent\", \"statusText\": \"Not sent\",\n     \"to\": \"Test Group\""))
 }

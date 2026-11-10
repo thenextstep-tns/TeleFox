@@ -401,6 +401,20 @@ private fun BrainJobsSection(api: ServerApi, chatId: Long) {
                     Switch(on, { value -> change { api.setBrainJob(chatId, job.id, value) } }, enabled = !busy)
                 }
             }
+            // Sending off: Brain keeps reading the chat and shows what it would have answered, but never sends to it.
+            if (current.chat.jobs.isNotEmpty() || !current.chat.sending) {
+                val sending = current.chat.sending
+                Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Brain may send replies", color = colors.text, fontSize = 16.sp)
+                        Text(
+                            if (sending) "Each reply still needs your approval" else "Off: Brain only shows what it would have answered",
+                            color = if (sending) colors.textSecondary else colors.warning, fontSize = 13.sp,
+                        )
+                    }
+                    Switch(sending, { value -> change { api.setBrainSending(chatId, value) } }, enabled = !busy)
+                }
+            }
             if (current.chat.added.isNotEmpty() || current.chat.removed.isNotEmpty()) {
                 TextButton({ change { api.resetBrainJobs(chatId) } }, Modifier.padding(horizontal = 8.dp), enabled = !busy) {
                     Text("Follow folders only", color = colors.accent)

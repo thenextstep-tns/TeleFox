@@ -929,6 +929,14 @@ function brainJobs(chat) {
         h("div", { class: "grow" }, h("div", { text: job.name }), hint ? h("div", { class: "brain-hint", text: hint }) : null),
         switchEl(on, value => change(`/v1/brain/chats/${chat.id}/jobs`, { job_id: job.id, on: value })));
     }));
+    // Sending off: Brain keeps reading the chat and shows what it would have answered, but never sends to it.
+    if (c.jobs.length || c.sending === false) {
+      const sending = c.sending !== false;
+      body.append(h("div", { class: "srow", style: "cursor:default;padding:8px 20px" },
+        h("div", { class: "grow" }, h("div", { text: "Brain may send replies" }),
+          h("div", { class: "brain-hint", text: sending ? "Each reply still needs your approval" : "Off: Brain only shows what it would have answered" })),
+        switchEl(sending, value => change(`/v1/brain/chats/${chat.id}/sending`, { on: value }))));
+    }
     if (c.added.length || c.removed.length) {
       body.append(h("div", { style: "padding:0 8px" },
         h("button", { class: "tbtn", title: "Forget the changes made for this chat", text: "Follow folders only",
@@ -941,6 +949,7 @@ function brainJobs(chat) {
       const result = await post(path, payload);
       if (result.text) toast(result.text);
       if (data && result.chat) { data.chat = result.chat; draw(); }
+      if (CV && CV.id === chat.id) loadBrainPanel(CV); // the side panel follows the change straight away
     } catch (e) {
       toast(e.message);
       load();
@@ -1638,9 +1647,9 @@ document.addEventListener("visibilitychange", scheduleRead);
 const BRAIN_STATUS = {
   open: "Waiting for you", approved: "Approved, being carried out", executed: "Approved and carried out",
   failed: "Approved, but it failed", rejected: "Rejected: nothing was sent", answered: "Answered",
-  dismissed: "Dismissed: nothing was sent",
+  dismissed: "Dismissed: nothing was sent", not_sent: "Not sent: sending is off for this chat",
 };
-const BRAIN_COLOR = { open: "var(--warning)", failed: "var(--danger)", executed: "var(--success)", answered: "var(--success)", approved: "var(--accent)" };
+const BRAIN_COLOR = { open: "var(--warning)", failed: "var(--danger)", executed: "var(--success)", answered: "var(--success)", approved: "var(--accent)", not_sent: "var(--warning)" };
 S.brainChats = LS.get("brainChats", {});
 
 function brainEpoch(at) {
@@ -1784,6 +1793,9 @@ function renderBrainPanel(view) {
   for (const job of brain.jobs.filter(j => j.paused)) {
     kids.push(h("div", { class: "bp-banner", text: `Job "${job.name}" is paused: new messages aren't being analysed.` }));
   }
+  if (brain.sending === false) {
+    kids.push(h("div", { class: "bp-banner", text: "Sending is off for this chat: Brain only shows what it would have answered and sends nothing." }));
+  }
   const selected = view.brainSelected;
   if (selected && selected.length) {
     const message = selected.map(id => view.msgs.get(id)).find(Boolean);
@@ -1844,7 +1856,8 @@ function brainRun(view, item, withJump) {
 function brainAction(view, action) {
   const card = h("div", { class: "bact" });
   const question = action.kind === "escalation";
-  card.append(h("div", { class: "bact-kind", text: question ? "Question for you" : `Action: ${action.actionType || "—"}` }));
+  const unsent = action.status === "not_sent";
+  card.append(h("div", { class: "bact-kind", text: question ? "Question for you" : unsent ? "Would have sent" : `Action: ${action.actionType || "—"}` }));
   if (action.to) card.append(h("div", { class: "bact-line" }, "To: ", h("b", { text: action.to })));
   if (question && action.question) card.append(h("div", { class: "brun-text", text: action.question }));
   if (action.text) card.append(h("div", { class: "bact-text", text: action.text }));
@@ -1855,7 +1868,7 @@ function brainAction(view, action) {
     text: BRAIN_STATUS[action.status] || action.statusText || action.status }));
   if (action.answer) card.append(h("div", { class: "bact-line" }, "Your answer: ", h("b", { text: action.answer })));
   if (action.reason) card.append(h("div", { class: "bact-line", style: "color:var(--text2)", text: "Why: " + action.reason }));
-  if (action.result) card.append(h("div", { class: "bact-line", style: "color:var(--text2)", text: action.result }));
+  if (action.result && !unsent) card.append(h("div", { class: "bact-line", style: "color:var(--text2)", text: action.result }));
   if (action.status === "open") card.append(brainControls(view, action));
   return card;
 }

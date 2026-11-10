@@ -65,6 +65,10 @@ class Brain:
     async def assign(self, chat_id: int, job_id: str, on: bool) -> dict[str, Any]:
         return await self._call("POST", "/chats/api/assign", {"chatId": str(chat_id), "jobId": job_id, "on": on})
 
+    async def sending(self, chat_id: int, on: bool) -> dict[str, Any]:
+        """Sending off: Brain keeps reading the chat and shows what it would have answered, but never sends to it."""
+        return await self._call("POST", "/chats/api/sending", {"chatId": str(chat_id), "on": on})
+
     async def reset(self, chat_id: int) -> dict[str, Any]:
         """Forgets the owner's own changes for this chat, so only Telegram folders decide."""
         return await self._call("POST", "/chats/api/reset", {"chatId": str(chat_id)})

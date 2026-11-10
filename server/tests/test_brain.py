@@ -45,7 +45,8 @@ class FakeBrain(BaseHTTPRequestHandler):
     def chat(self, chat_id):
         jobs = self.state.setdefault(chat_id, {"jobs": [], "added": []})
         return {"chatId": chat_id, "title": "Truck 342", "kind": "group", "account": "main", "folders": ["SA Trucking"],
-                "jobs": jobs["jobs"], "viaFolder": ["job2"], "added": jobs["added"], "removed": []}
+                "jobs": jobs["jobs"], "viaFolder": ["job2"], "added": jobs["added"], "removed": [],
+                "sending": chat_id not in self.state.get("noSend", set())}
 
     def handle_any(self, body):
         FakeBrain.seen.append({"method": self.command, "path": self.path, "token": self.headers.get("x-brain-token"),
@@ -71,6 +72,13 @@ class FakeBrain(BaseHTTPRequestHandler):
                 jobs["jobs"].append(body["jobId"])
                 jobs["added"].append(body["jobId"])
             return self.reply(200, {"text": "now goes to the job", "chat": self.chat(body["chatId"])})
+        if self.path == "/chats/api/sending":
+            off = self.state.setdefault("noSend", set())
+            if body["on"]:
+                off.discard(body["chatId"])
+            else:
+                off.add(body["chatId"])
+            return self.reply(200, {"text": "Sending is off" if not body["on"] else "Sending is on", "chat": self.chat(body["chatId"])})
         if self.path == "/chats/api/reset":
             self.state.pop(body["chatId"], None)
             return self.reply(200, {"text": "follows its folders again", "chat": self.chat(body["chatId"])})
@@ -212,8 +220,28 @@ async def test_the_panel_shows_only_for_chats_in_a_job(service, brain_url, brain
     assert item["messageIds"] == [101 << 20, 102 << 20]
     assert item["actions"][0]["text"] == "Got it" and item["decisions"][0]["text"] == "This needs a reply."
     assert panel["waiting"] == [103 << 20]  # received by Brain, not started yet
+    assert panel["sending"] is True
     asked = [a["path"] for a in FakeBrain.seen]
     assert any(p.startswith("/brain/api/chat-analysis?chatId=-5534970202") for p in asked)
+
+
+async def test_sending_can_be_switched_off_for_a_chat(service, brain_url, brain_env):
+    use_brain(service, brain_url, env_file=str(brain_env))
+    port = service.config.server.admin_port
+    transport = httpx.ASGITransport(app=create_admin(service))
+    async with httpx.AsyncClient(transport=transport, base_url=f"http://127.0.0.1:{port}") as browser:
+        csrf = {"x-foxygram": "1"}
+        await browser.post("/v1/brain/chats/-5534970202/jobs", json={"job_id": "job2", "on": True}, headers=csrf)
+        assert (await browser.post("/v1/brain/chats/-5534970202/sending", json={"on": False})).status_code == 403
+        done = (await browser.post("/v1/brain/chats/-5534970202/sending", json={"on": False}, headers=csrf)).json()
+        assert done["chat"]["sending"] is False and done["text"]
+        assert FakeBrain.seen[-1]["body"] == {"chatId": "-5534970202", "on": False}
+        panel = (await browser.get("/v1/brain/chats/-5534970202/panel")).json()
+        assert panel["sending"] is False and panel["jobs"][0]["id"] == "job2"  # still read, just never sent
+        back = (await browser.post("/v1/brain/chats/-5534970202/sending", json={"on": True}, headers=csrf)).json()
+        assert back["chat"]["sending"] is True
+        assert (await browser.post("/v1/brain/chats/-5534970202/sending", json={}, headers=csrf)).status_code == 422
+    assert all(asked["token"] == TOKEN for asked in FakeBrain.seen)
 
 
 async def test_decisions_reach_brain_and_its_refusals_come_back(service, brain_url, brain_env):

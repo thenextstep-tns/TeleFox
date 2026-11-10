@@ -24,6 +24,9 @@ data class BrainAction(
 ) {
     val isQuestion: Boolean get() = kind == "escalation"
     val isOpen: Boolean get() = status == "open"
+
+    /** A reply Brain would have sent, kept because sending is off for this chat. It is never sent. */
+    val isUnsent: Boolean get() = status == "not_sent"
 }
 
 /** One agent run started by this chat's messages, with its follow-ups folded in. Message ids are TDLib's. */
@@ -42,12 +45,14 @@ data class BrainRun(
 /**
  * Brain's side panel for a chat. Only chats in at least one of Brain's jobs are active.
  * [waiting] holds messages Brain has received but not started on yet (it waits about 20 s for more), as TDLib ids.
+ * [sending] is false when the owner switched sending off: Brain only shows what it would have answered.
  */
 data class BrainPanel(
     val active: Boolean,
     val jobs: List<BrainPanelJob>,
     val items: List<BrainRun>,
     val waiting: List<Long> = emptyList(),
+    val sending: Boolean = true,
 ) {
     val pausedJobs: List<BrainPanelJob> get() = jobs.filter { it.paused }
 
@@ -93,6 +98,7 @@ fun parseBrainPanel(body: String): BrainPanel {
         },
         items = (0 until items.length()).map { index -> parseRun(items.getJSONObject(index)) },
         waiting = json.optJSONArray("waiting")?.let { ids -> (0 until ids.length()).map { ids.getLong(it) } } ?: emptyList(),
+        sending = json.optBoolean("sending", true),
     )
 }
 

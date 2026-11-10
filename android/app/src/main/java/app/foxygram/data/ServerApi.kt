@@ -20,7 +20,14 @@ data class AiChat(val chatId: Long, val title: String, val kind: String, val ena
 data class BrainJob(val id: String, val name: String)
 
 /** Which of Brain's jobs get a chat: all of them, those a Telegram folder brings, and the owner's own changes. */
-data class BrainChat(val jobs: List<String>, val viaFolder: List<String>, val added: List<String>, val removed: List<String>)
+data class BrainChat(
+    val jobs: List<String>,
+    val viaFolder: List<String>,
+    val added: List<String>,
+    val removed: List<String>,
+    /** False when the owner switched sending off: Brain only shows what it would have answered. */
+    val sending: Boolean = true,
+)
 
 data class BrainJobs(val jobs: List<BrainJob>, val connected: Boolean, val chat: BrainChat)
 
@@ -189,6 +196,10 @@ class ServerApi(private val settings: Settings) {
     suspend fun resetBrainJobs(chatId: Long): BrainChange =
         parseBrainChange(request("POST", "/v1/brain/chats/$chatId/reset", JSONObject()))
 
+    /** Sending off: Brain keeps reading the chat and shows what it would have answered, but never sends to it. */
+    suspend fun setBrainSending(chatId: Long, on: Boolean): BrainChange =
+        parseBrainChange(request("POST", "/v1/brain/chats/$chatId/sending", JSONObject().put("on", on)))
+
     /** Brain's side panel for a chat: inactive unless the chat is in one of Brain's jobs. */
     suspend fun brainPanel(chatId: Long): BrainPanel = parseBrainPanel(request("GET", "/v1/brain/chats/$chatId/panel"))
 
@@ -210,7 +221,7 @@ class ServerApi(private val settings: Settings) {
             val array = json.optJSONArray(key) ?: return emptyList()
             return (0 until array.length()).map { array.getString(it) }
         }
-        return BrainChat(ids("jobs"), ids("viaFolder"), ids("added"), ids("removed"))
+        return BrainChat(ids("jobs"), ids("viaFolder"), ids("added"), ids("removed"), json.optBoolean("sending", true))
     }
 
     private fun parseCase(json: JSONObject): CaseSummary {

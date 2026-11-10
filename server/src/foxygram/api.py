@@ -63,6 +63,10 @@ class BrainJobBody(BaseModel):
     on: bool
 
 
+class BrainSendingBody(BaseModel):
+    on: bool
+
+
 class BrainDecision(BaseModel):
     decision: Literal["approve", "reject", "answer", "dismiss"]
     text: str | None = None
@@ -83,6 +87,8 @@ def brain_panel(chat: dict[str, Any], status: dict[str, Any], analysis: dict[str
         "items": items,
         # Messages Brain has received but not yet started on (it waits about 20 s for more), as TDLib ids.
         "waiting": [to_tdlib(int(m)) for m in analysis.get("waiting") or []],
+        # False when the owner switched sending off: Brain only shows what it would have answered.
+        "sending": chat["chat"].get("sending", True) is not False,
     }
 
 
@@ -329,6 +335,11 @@ def add_v1_routes(app: FastAPI, service: Service, dependencies: list[Any]) -> No
     @app.post("/v1/brain/chats/{chat_id}/jobs", **guarded)
     async def brain_assign(chat_id: int, body: BrainJobBody) -> dict[str, Any]:
         return await brain(service.brain.assign(chat_id, body.job_id, body.on))
+
+    @app.post("/v1/brain/chats/{chat_id}/sending", **guarded)
+    async def brain_sending(chat_id: int, body: BrainSendingBody) -> dict[str, Any]:
+        """Sending off: Brain keeps reading the chat and shows what it would have answered, but never sends to it."""
+        return await brain(service.brain.sending(chat_id, body.on))
 
     @app.post("/v1/brain/chats/{chat_id}/reset", **guarded)
     async def brain_reset(chat_id: int) -> dict[str, Any]:
