@@ -51,6 +51,14 @@ max_messages = 30
 [cases]
 # Below this confidence an AI link waits in the review list.
 min_confidence = 0.6
+
+[brain]
+# Brain, the agent system on this PC, decides which of its jobs get each chat.
+url = "http://127.0.0.1:7777"
+# FoxyGram reads BRAIN_TOKEN from this file. Empty means Documents\\Brain\\.env.
+env_file = ""
+# Or paste the token here instead.
+token = ""
 """
 
 
@@ -106,6 +114,17 @@ class CaseConfig:
 
 
 @dataclass(frozen=True)
+class BrainConfig:
+    url: str = "http://127.0.0.1:7777"
+    env_file: str = ""
+    token: str = ""
+
+    @property
+    def env_path(self) -> Path:
+        return Path(self.env_file) if self.env_file else Path.home() / "Documents" / "Brain" / ".env"
+
+
+@dataclass(frozen=True)
 class Secrets:
     """Generated once; handed to the phone only through the pairing code."""
 
@@ -122,6 +141,7 @@ class Config:
     claude: ClaudeConfig = field(default_factory=ClaudeConfig)
     bursts: BurstConfig = field(default_factory=BurstConfig)
     cases: CaseConfig = field(default_factory=CaseConfig)
+    brain: BrainConfig = field(default_factory=BrainConfig)
 
     @property
     def db_path(self) -> Path:
@@ -204,4 +224,5 @@ def load_config(home: Path | None = None, env_file: Path | None = None) -> Confi
         claude=ClaudeConfig(**data.get("claude", {})),
         bursts=BurstConfig(**data.get("bursts", {})),
         cases=CaseConfig(**data.get("cases", {})),
+        brain=BrainConfig(**data.get("brain", {})),
     )

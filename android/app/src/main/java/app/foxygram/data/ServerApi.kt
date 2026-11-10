@@ -17,6 +17,15 @@ data class ProjectInfo(val id: Long, val name: String, val color: Long, val cate
 
 data class AiChat(val chatId: Long, val title: String, val kind: String, val enabled: Boolean, val projectId: Long?, val categoryId: Long?)
 
+data class BrainJob(val id: String, val name: String)
+
+/** Which of Brain's jobs get a chat: all of them, those a Telegram folder brings, and the owner's own changes. */
+data class BrainChat(val jobs: List<String>, val viaFolder: List<String>, val added: List<String>, val removed: List<String>)
+
+data class BrainJobs(val jobs: List<BrainJob>, val connected: Boolean, val chat: BrainChat)
+
+data class BrainChange(val text: String, val chat: BrainChat)
+
 class ServerError(message: String) : Exception(message)
 
 /** The laptop. It may be off or asleep at any moment, so every caller must cope with failure. */
@@ -39,7 +48,11 @@ class ServerApi(private val settings: Settings) {
             val code = connection.responseCode
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (code !in 200..299) throw ServerError("HTTP $code")
+            // The server explains problems in "detail", such as Brain not running; show that rather than a code.
+            if (code !in 200..299) {
+                val detail = runCatching { JSONObject(text).opt("detail") as? String }.getOrNull()
+                throw ServerError(detail?.ifBlank { null } ?: "HTTP $code")
+            }
             text
         } finally {
             connection.disconnect()
@@ -156,6 +169,37 @@ class ServerApi(private val settings: Settings) {
 
     suspend fun unlink(burstId: Long) {
         request("POST", "/v1/bursts/$burstId/move", JSONObject())
+    }
+
+    /** Brain jobs go through the laptop, which holds Brain's token; the phone never sees it. */
+    suspend fun brainJobs(chatId: Long): BrainJobs {
+        val json = JSONObject(request("GET", "/v1/brain/chats/$chatId"))
+        val jobs = json.getJSONArray("jobs")
+        return BrainJobs(
+            jobs = (0 until jobs.length()).map { jobs.getJSONObject(it).let { j -> BrainJob(j.getString("id"), j.getString("name")) } },
+            connected = json.optBoolean("connected", true),
+            chat = parseBrainChat(json.getJSONObject("chat")),
+        )
+    }
+
+    suspend fun setBrainJob(chatId: Long, jobId: String, on: Boolean): BrainChange =
+        parseBrainChange(request("POST", "/v1/brain/chats/$chatId/jobs", JSONObject().put("job_id", jobId).put("on", on)))
+
+    /** Forgets the owner's own changes for this chat, so only Telegram folders decide. */
+    suspend fun resetBrainJobs(chatId: Long): BrainChange =
+        parseBrainChange(request("POST", "/v1/brain/chats/$chatId/reset", JSONObject()))
+
+    private fun parseBrainChange(text: String): BrainChange {
+        val json = JSONObject(text)
+        return BrainChange(json.optString("text"), parseBrainChat(json.getJSONObject("chat")))
+    }
+
+    private fun parseBrainChat(json: JSONObject): BrainChat {
+        fun ids(key: String): List<String> {
+            val array = json.optJSONArray(key) ?: return emptyList()
+            return (0 until array.length()).map { array.getString(it) }
+        }
+        return BrainChat(ids("jobs"), ids("viaFolder"), ids("added"), ids("removed"))
     }
 
     private fun parseCase(json: JSONObject): CaseSummary {

@@ -10,6 +10,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel
 
 from . import __version__
+from .brain import BrainError
 from .db import now
 from .service import Service
 
@@ -54,6 +55,11 @@ class MergeBody(BaseModel):
 class MoveBody(BaseModel):
     case_id: int | None = None
     new_title: str | None = None
+
+
+class BrainJobBody(BaseModel):
+    job_id: str
+    on: bool
 
 
 def _case_row(service: Service, case: dict[str, Any]) -> dict[str, Any]:
@@ -284,3 +290,22 @@ def add_v1_routes(app: FastAPI, service: Service, dependencies: list[Any]) -> No
                WHERE messages_fts MATCH ? ORDER BY m.date DESC LIMIT ?""",
             (terms, min(limit, MAX_LIST)),
         )
+
+    # Brain jobs: which of Brain's jobs get a chat. The server asks Brain, so its token stays on this PC.
+    async def brain(call):
+        try:
+            return await call
+        except BrainError as error:
+            raise HTTPException(status_code=error.status, detail=error.message) from error
+
+    @app.get("/v1/brain/chats/{chat_id}", **guarded)
+    async def brain_chat(chat_id: int) -> dict[str, Any]:
+        return await brain(service.brain.chat(chat_id))
+
+    @app.post("/v1/brain/chats/{chat_id}/jobs", **guarded)
+    async def brain_assign(chat_id: int, body: BrainJobBody) -> dict[str, Any]:
+        return await brain(service.brain.assign(chat_id, body.job_id, body.on))
+
+    @app.post("/v1/brain/chats/{chat_id}/reset", **guarded)
+    async def brain_reset(chat_id: int) -> dict[str, Any]:
+        return await brain(service.brain.reset(chat_id))

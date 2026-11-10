@@ -226,6 +226,8 @@ a { color:inherit; }
 .chips { display:flex; flex-wrap:wrap; gap:8px; padding:0 20px; }
 .chip { border-radius:16px; padding:7px 14px; background:var(--surface-high); color:var(--text); font-size:14px; cursor:pointer; border:0; }
 .chip.on { background:var(--accent-soft); color:var(--accent); font-weight:500; }
+.brain-note { color:var(--text2); font-size:14px; padding:4px 20px 12px; }
+.brain-hint { color:var(--text2); font-size:13px; }
 .sw { width:52px; height:32px; border-radius:16px; border:2px solid var(--text2); background:var(--surface-high); position:relative; flex:none; cursor:pointer; padding:0; }
 .sw::after { content:""; position:absolute; width:16px; height:16px; border-radius:50%; background:var(--text2); left:6px; top:6px; transition:all .15s; }
 .sw.on { background:var(--accent); border-color:var(--accent); }
@@ -826,7 +828,8 @@ function chatSheet(chat, list) {
     sheetRow("pin", chat.pinned ? "Открепить" : "Закрепить", act(() => setChat(chat.id, { pinned: !chat.pinned }, list))),
     sheetRow(chat.muted ? "bell" : "bellOff", chat.muted ? "Включить уведомления" : "Без звука", act(() => setChat(chat.id, { muted: !chat.muted }))),
     sheetRow(chat.archived ? "unarchive" : "archive", chat.archived ? "Вернуть из архива" : "В архив", act(() => setChat(chat.id, { archived: !chat.archived }))),
-    claude);
+    claude,
+    brainJobs(chat));
   claude.append(
     h("div", { class: "divider", style: "margin:6px 0" }),
     h("div", { class: "srow", style: "cursor:default" }, icon("robot"),
@@ -867,6 +870,50 @@ function chatSheet(chat, list) {
     drawCategories();
     claude.append(h("div", { class: "ptitle", text: "Проект" }), projectChips, categoryBox, h("div", { style: "height:12px" }));
   }).catch(() => {});
+}
+// Brain jobs: which of Brain's jobs get this chat. Like Brain's own /chats page: one switch per job, a note when a
+// Telegram folder brings the chat in, and "follow folders only" once the chat has changes of its own.
+function brainJobs(chat) {
+  const body = h("div");
+  const box = h("div", {}, h("div", { class: "divider", style: "margin:6px 0" }), h("div", { class: "ptitle", text: "Работы в Brain" }), body);
+  let data = null;
+  const note = text => body.replaceChildren(h("div", { class: "brain-note", text }));
+  const draw = () => {
+    const c = data.chat;
+    if (!data.jobs.length) { note("В Brain нет включённых работ."); return; }
+    body.replaceChildren(...data.jobs.map(job => {
+      const on = c.jobs.includes(job.id);
+      const viaFolder = c.viaFolder.includes(job.id);
+      const removed = c.removed.includes(job.id);
+      const hint = on && viaFolder ? "из папки" : removed ? "убран, хотя папка его добавляет" : "";
+      return h("div", { class: "srow", style: "cursor:default;padding:8px 20px" },
+        h("div", { class: "grow" }, h("div", { text: job.name }), hint ? h("div", { class: "brain-hint", text: hint }) : null),
+        switchEl(on, value => change(`/v1/brain/chats/${chat.id}/jobs`, { job_id: job.id, on: value })));
+    }));
+    if (c.added.length || c.removed.length) {
+      body.append(h("div", { style: "padding:0 8px" },
+        h("button", { class: "tbtn", title: "Забыть изменения для этого чата", text: "Только по папкам",
+          onclick: () => change(`/v1/brain/chats/${chat.id}/reset`, {}) })));
+    }
+    if (!data.connected) body.append(h("div", { class: "brain-note", text: "Brain сейчас не подключён к Telegram." }));
+  };
+  async function change(path, payload) {
+    try {
+      const result = await post(path, payload);
+      if (result.text) toast(result.text);
+      if (data && result.chat) { data.chat = result.chat; draw(); }
+    } catch (e) {
+      toast(e.message);
+      load();
+    }
+  }
+  async function load() {
+    if (!data) note("Загрузка…");
+    try { data = await api(`/v1/brain/chats/${chat.id}`); draw(); }
+    catch (e) { data = null; note(e.message); }
+  }
+  load();
+  return box;
 }
 function viewer(kind, fileId, name) {
   closeOverlays();

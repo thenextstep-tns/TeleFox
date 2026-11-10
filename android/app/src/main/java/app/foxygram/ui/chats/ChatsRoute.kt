@@ -64,7 +64,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.foxygram.data.BrainChange
+import app.foxygram.data.BrainJobs
 import app.foxygram.data.ProjectInfo
+import app.foxygram.data.ServerApi
 import app.foxygram.model.ChatItem
 import app.foxygram.model.FolderTab
 import app.foxygram.td.ChatCommands
@@ -263,6 +266,7 @@ fun ChatActionsSheet(telegram: Telegram, chat: ChatItem, onDismiss: () -> Unit) 
                         }
                     }
                 }
+                BrainJobsSection(api, chat.id)
                 Spacer(Modifier.height(12.dp))
             }
         }
@@ -335,6 +339,81 @@ private fun SheetRow(icon: ImageVector, title: String, tint: Color? = null, onCl
 @Composable
 private fun PickerTitle(text: String) {
     Text(text, color = Foxy.colors.textSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = 20.dp, top = 12.dp, bottom = 6.dp))
+}
+
+/**
+ * Which of Brain's jobs get this chat, like Brain's own /chats page: one switch per job, a note when a Telegram
+ * folder brings the chat in, and "follow folders only" once the chat has changes of its own.
+ */
+@Composable
+private fun BrainJobsSection(api: ServerApi, chatId: Long) {
+    val colors = Foxy.colors
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var state by remember(chatId) { mutableStateOf<BrainJobs?>(null) }
+    var problem by remember(chatId) { mutableStateOf<String?>(null) }
+    var busy by remember(chatId) { mutableStateOf(false) }
+
+    LaunchedEffect(chatId) {
+        runCatching { api.brainJobs(chatId) }
+            .onSuccess { state = it }
+            .onFailure { problem = it.message ?: "Brain недоступен" }
+    }
+
+    fun change(block: suspend () -> BrainChange) {
+        if (busy) return
+        busy = true
+        scope.launch {
+            runCatching { block() }
+                .onSuccess { result ->
+                    state = state?.copy(chat = result.chat)
+                    if (result.text.isNotBlank()) Toast.makeText(context, result.text, Toast.LENGTH_SHORT).show()
+                }
+                .onFailure { failure ->
+                    Toast.makeText(context, failure.message ?: "Не удалось", Toast.LENGTH_LONG).show()
+                    runCatching { api.brainJobs(chatId) }.onSuccess { state = it }
+                }
+            busy = false
+        }
+    }
+
+    HorizontalDivider(color = colors.border, thickness = 0.5.dp, modifier = Modifier.padding(top = 12.dp))
+    PickerTitle("Работы в Brain")
+    val current = state
+    val failure = problem
+    when {
+        failure != null -> BrainNote(failure)
+        current == null -> BrainNote("Загрузка…")
+        current.jobs.isEmpty() -> BrainNote("В Brain нет включённых работ.")
+        else -> {
+            current.jobs.forEach { job ->
+                val on = job.id in current.chat.jobs
+                val hint = when {
+                    on && job.id in current.chat.viaFolder -> "из папки"
+                    job.id in current.chat.removed -> "убран, хотя папка его добавляет"
+                    else -> null
+                }
+                Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(job.name, color = colors.text, fontSize = 16.sp)
+                        if (hint != null) Text(hint, color = colors.textSecondary, fontSize = 13.sp)
+                    }
+                    Switch(on, { value -> change { api.setBrainJob(chatId, job.id, value) } }, enabled = !busy)
+                }
+            }
+            if (current.chat.added.isNotEmpty() || current.chat.removed.isNotEmpty()) {
+                TextButton({ change { api.resetBrainJobs(chatId) } }, Modifier.padding(horizontal = 8.dp), enabled = !busy) {
+                    Text("Только по папкам", color = colors.accent)
+                }
+            }
+            if (!current.connected) BrainNote("Brain сейчас не подключён к Telegram.")
+        }
+    }
+}
+
+@Composable
+private fun BrainNote(text: String) {
+    Text(text, color = Foxy.colors.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
 }
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)

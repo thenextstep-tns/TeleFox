@@ -80,6 +80,19 @@ folder. Anything a browser could run, such as SVG, is served as a download.
 The cases, labels and review screens call the same `/v1` routes as the phone. On this port
 they are guarded by the control page's checks instead of the token.
 
+### Brain jobs
+
+Brain, the owner's agent system on the same PC, decides which of its jobs get each Telegram
+chat. The chat menu on the phone and in the browser shows one switch per job, notes the jobs
+a Telegram folder brings the chat into, and offers "Только по папкам" once the chat has
+changes of its own, the same way Brain's `/chats` page does.
+
+Both call `/v1/brain/chats/{id}` on the server, and the server calls Brain's
+`http://127.0.0.1:7777/chats/api/*` (`brain.py`). Brain's token is read from Brain's own
+`.env` (`BRAIN_TOKEN`) on every call, or from `[brain] token` in `config.toml`, and never
+leaves the PC. Chat ids go to Brain unchanged: TDLib's ids are already the "marked" format
+Brain uses. When Brain isn't running, the menu says so.
+
 ### Pipeline
 
 Only chats the owner selects are stored. Everything else is dropped on arrival.

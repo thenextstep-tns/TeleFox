@@ -8,6 +8,7 @@ import logging
 from typing import Any
 
 from .analysis import IncomingRow, store_message, worker
+from .brain import Brain
 from .config import Config
 from .db import Database
 from .engine import ClaudeEngine
@@ -48,6 +49,7 @@ class Service:
         self.session.on_chat_changed = self.on_chat_changed
         self.events = EventHub()
         self.session.on_event = self.events.publish
+        self.brain = Brain(config.brain)
 
     def start(self) -> None:
         self.session.start()
