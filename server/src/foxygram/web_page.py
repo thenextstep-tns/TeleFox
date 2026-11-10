@@ -1165,8 +1165,11 @@ function buildFeed(view) {
     const m = list[i];
     let j = i + 1;
     if (m.album !== "0") while (j < list.length && list[j].album === m.album) j++;
-    if (j - i === 1) { merged.push(m); i = j; continue; }
     const members = list.slice(i, j);
+    // Only photos and videos share one grid. Files sent together (several PDFs, say) stay one message each, so every
+    // file shows with its name and can be downloaded; a grid has no place for them.
+    const visual = members.every(x => x.body.type === "photo" || x.body.type === "video");
+    if (j - i === 1 || !visual) { merged.push(...members); i = j; continue; }
     const withCaption = members.find(x => x.body.caption && x.body.caption.text.trim());
     const last = members[members.length - 1];
     merged.push({

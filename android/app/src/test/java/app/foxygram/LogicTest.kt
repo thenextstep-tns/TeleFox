@@ -88,6 +88,16 @@ class LogicTest {
         assertEquals(listOf<MessageBody>(a, b), (feed[0].item.body as MessageBody.Album).items)
     }
 
+    @Test fun filesSentTogetherStayOneMessageEach() {
+        // Two permits sent as one group, as a driver did in "Truck 1442": both must show, each with its name.
+        val ks = MessageBody.Document(11, "KS permit.pdf", 43041, "application/pdf", null, RichText.Empty)
+        val mo = MessageBody.Document(12, "MO permit.pdf", 123977, "application/pdf", null, RichText.Empty)
+        val feed = rows(message(2, alice, day, album = 88, body = mo), message(1, alice, day, album = 88, body = ks))
+        assertEquals(2, feed.size)
+        assertEquals(listOf<MessageBody>(mo, ks), feed.map { it.item.body })
+        assertTrue(feed.none { it.item.body is MessageBody.Album })
+    }
+
     @Test fun dayChangeAddsADateRow() {
         val feed = buildFeed(listOf(message(2, alice, day + 90000), message(1, alice, day)), ChatKind.Group, null)
         assertEquals(2, feed.count { it is FeedRow.Date })

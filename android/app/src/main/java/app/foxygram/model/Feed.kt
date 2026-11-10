@@ -52,8 +52,11 @@ private fun mergeAlbums(messages: List<MessageItem>): List<MessageItem> {
         }
         var end = index + 1
         while (end < messages.size && messages[end].albumId == head.albumId) end++
-        if (end - index == 1) {
-            result += head
+        // Only photos and videos share one grid. Files sent together (several PDFs, say) stay one message each, so every
+        // file shows with its name and can be opened; a grid has no place for them.
+        val visual = messages.subList(index, end).all { it.body is MessageBody.Photo || it.body is MessageBody.Video }
+        if (end - index == 1 || !visual) {
+            for (i in index until end) result += messages[i]
         } else {
             val members = messages.subList(index, end).asReversed()
             val caption = members.firstOrNull { !it.body.caption.isBlank }?.body?.caption ?: RichText.Empty
