@@ -45,6 +45,7 @@ class Telegram:
         self.extra = {}
         self.file_path = None
         self.tdlib_dir = tdlib_dir
+        self.topics = []
 
     async def call(self, query, timeout=60.0):
         self.calls.append(query)
@@ -61,6 +62,13 @@ class Telegram:
                     raise TdError(400, "file not found")
                 return {"@type": "file", "id": query["file_id"],
                         "local": {"path": str(self.file_path), "is_downloading_completed": True}}
+            case "getForumTopics":
+                return {"@type": "forumTopics", "topics": self.topics, "next_offset_date": 0,
+                        "next_offset_message_id": 0, "next_offset_forum_topic_id": 0}
+            case "getForumTopic":
+                return next(t for t in self.topics if t["info"]["forum_topic_id"] == query["forum_topic_id"])
+            case "getForumTopicHistory":
+                return {"@type": "messages", "messages": self.history}
             case "searchChats":
                 return {"@type": "chats", "chat_ids": [GROUP]}
             case "searchChatsOnServer":
@@ -214,6 +222,53 @@ async def test_chat_actions(web, telegram):
     assert mute["use_default_mute_for"] is False and mute["mute_for"] > 0
     await web.post(f"/app/api/chats/{GROUP}/settings", json={"archived": True}, headers=CSRF)
     assert telegram.of("addChatToList")[0]["chat_list"] == {"@type": "chatListArchive"}
+
+
+def forum_topic(topic_id, name, order, pinned=False, unread=0, color=0x6FB9F0):
+    return {"@type": "forumTopic", "info": {"forum_topic_id": topic_id, "name": name, "icon": {"color": color}},
+            "order": str(order), "is_pinned": pinned, "unread_count": unread, "unread_mention_count": 0,
+            "last_read_inbox_message_id": 40, "last_message": text_message(50 + topic_id, GROUP, f"в теме {name}")}
+
+
+async def test_a_group_with_topics_says_so_and_lists_them_like_the_phone(web, telegram, service):
+    await feed(service.session, {"@type": "updateSupergroup", "supergroup": {"id": 1001, "member_count": 5, "is_forum": True}})
+    chats = (await web.get("/app/api/chats")).json()["chats"]
+    assert next(c for c in chats if c["id"] == GROUP)["forum"] is True
+    telegram.topics = [forum_topic(1, "General", 10), forum_topic(7, "Склад", 30, unread=2), forum_topic(9, "Таможня", 5, pinned=True)]
+    topics = (await web.get(f"/app/api/chats/{GROUP}/topics")).json()["topics"]
+    assert [t["title"] for t in topics] == ["Таможня", "Склад", "General"]
+    assert topics[1] | {"date": 0} == {"id": 7, "title": "Склад", "preview": "в теме Склад", "date": 0, "unread": 2, "mentions": 0,
+                                      "color": "#6fb9f0", "pinned": False, "closed": False, "last_read_inbox": 40}
+    one = (await web.get(f"/app/api/chats/{GROUP}/topics/7")).json()["topic"]
+    assert one["title"] == "Склад"
+
+
+async def test_a_topic_reads_sends_and_marks_read_inside_that_topic(web, telegram):
+    telegram.history = [text_message(60, GROUP, "в теме", topic_id={"@type": "messageTopicForum", "forum_topic_id": 7})]
+    messages = (await web.get(f"/app/api/chats/{GROUP}/messages", params={"topic": 7})).json()["messages"]
+    assert messages[0]["topic"] == 7
+    history = telegram.of("getForumTopicHistory")[0]
+    assert history["forum_topic_id"] == 7 and telegram.of("getChatHistory") == []
+
+    await web.post(f"/app/api/chats/{GROUP}/send", json={"text": "привет", "topic": 7}, headers=CSRF)
+    assert telegram.of("sendMessage")[0]["topic_id"] == {"@type": "messageTopicForum", "forum_topic_id": 7}
+
+    await web.post(f"/app/api/chats/{GROUP}/read", json={"ids": [60], "topic": 7}, headers=CSRF)
+    assert telegram.of("viewMessages")[0]["source"] == {"@type": "messageSourceForumTopicHistory"}
+
+
+async def test_sending_outside_a_topic_names_none(web, telegram):
+    await web.post(f"/app/api/chats/{GROUP}/send", json={"text": "привет"}, headers=CSRF)
+    assert "topic_id" not in telegram.of("sendMessage")[0]
+
+
+async def test_topic_changes_reach_the_browser(service):
+    seen = []
+    service.session.on_event = seen.append
+    await feed(service.session,
+               {"@type": "updateForumTopicInfo", "info": {"chat_id": GROUP, "forum_topic_id": 7, "name": "Склад 2"}},
+               {"@type": "updateForumTopic", "chat_id": GROUP, "forum_topic_id": 7, "last_read_inbox_message_id": 60})
+    assert seen == [{"t": "topics", "chat_id": GROUP}, {"t": "topics", "chat_id": GROUP}]
 
 
 async def test_search_merges_local_and_server_results(web, telegram):

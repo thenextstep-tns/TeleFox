@@ -65,8 +65,8 @@ can't take over its routing.
 ### Browser client
 
 `http://127.0.0.1:8788/app` copies the phone app's screens for the laptop: chat list with
-folders and archive, chats with replies, photos, files and voice, cases, the review queue and
-the Claude chat list. It is only reachable from this computer, and the tunnel never sees it.
+folders and archive, groups with topics opening on their topic list, chats with replies,
+photos, files and voice, cases, the review queue and the Claude chat list. It is only reachable from this computer, and the tunnel never sees it.
 
 Unlike the phone, it has no Telegram session of its own. It reads and sends through the
 server's session (`web.py`), which keeps a copy of TDLib's chats, users and folders

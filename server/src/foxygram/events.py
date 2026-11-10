@@ -7,7 +7,7 @@ from typing import Any
 
 QUEUE_SIZE = 500
 # Events that stand for "reload this"; repeats inside one flush window carry no extra information.
-MERGED = {"chats", "messages", "state"}
+MERGED = {"chats", "messages", "state", "topics"}
 
 
 class EventHub:

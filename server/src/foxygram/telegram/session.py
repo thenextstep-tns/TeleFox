@@ -16,6 +16,8 @@ from .tdjson import TdClient, TdError
 log = logging.getLogger("telegram")
 
 HISTORY_FILL_TRIES = 3
+TOPIC_PAGE = 100
+MAX_TOPIC_PAGES = 10
 MUTE_FOREVER_SECONDS = 2_147_483_647
 DOWNLOAD_TIMEOUT = 600.0
 # Message changes the browser shows. Each one asks it to reload the newest page of that chat.
@@ -27,6 +29,12 @@ MESSAGE_UPDATES = {
     "updateMessageSendFailed",
     "updateChatReadOutbox",
 }
+# A topic was created, renamed, closed or read. The browser reloads that group's list of topics.
+TOPIC_UPDATES = {"updateForumTopic", "updateForumTopicInfo"}
+
+
+def topic_id(topic: dict[str, Any]) -> int:
+    return int((topic.get("info") or {}).get("forum_topic_id") or 0)
 
 
 @dataclass
@@ -137,18 +145,19 @@ class TelegramSession:
 
     # --- Calls the browser client makes ---
 
-    async def history_page(self, chat_id: int, from_message_id: int, offset: int, limit: int) -> list[dict[str, Any]]:
-        """One page of history, newest first. TDLib often answers a first call with only what it has cached."""
+    async def history_page(self, chat_id: int, from_message_id: int, offset: int, limit: int,
+                           topic: int = 0) -> list[dict[str, Any]]:
+        """One page of a chat's history, or of one topic of it, newest first.
+        TDLib often answers a first call with only what it has cached."""
+        if topic:
+            query = {"@type": "getForumTopicHistory", "chat_id": chat_id, "forum_topic_id": topic,
+                     "from_message_id": from_message_id, "offset": offset, "limit": limit}
+        else:
+            query = {"@type": "getChatHistory", "chat_id": chat_id, "from_message_id": from_message_id,
+                     "offset": offset, "limit": limit, "only_local": False}
         messages: list[dict[str, Any]] = []
         for _ in range(HISTORY_FILL_TRIES):
-            page = await self.client.call({
-                "@type": "getChatHistory",
-                "chat_id": chat_id,
-                "from_message_id": from_message_id,
-                "offset": offset,
-                "limit": limit,
-                "only_local": False,
-            })
+            page = await self.client.call(query)
             messages = [m for m in page.get("messages") or [] if m]
             if len(messages) >= limit or offset < 0:
                 break
@@ -166,14 +175,41 @@ class TelegramSession:
     async def close_chat(self, chat_id: int) -> None:
         await self.client.call({"@type": "closeChat", "chat_id": chat_id})
 
-    async def view_messages(self, chat_id: int, message_ids: list[int]) -> None:
+    async def view_messages(self, chat_id: int, message_ids: list[int], topic: int = 0) -> None:
+        source = "messageSourceForumTopicHistory" if topic else "messageSourceChatHistory"
         await self.client.call({
             "@type": "viewMessages",
             "chat_id": chat_id,
             "message_ids": message_ids,
-            "source": {"@type": "messageSourceChatHistory"},
+            "source": {"@type": source},
             "force_read": True,
         })
+
+    async def forum_topics(self, chat_id: int) -> list[dict[str, Any]]:
+        """Every topic of a group with topics, pinned first, then by latest activity, as the phone lists them."""
+        found: dict[int, dict[str, Any]] = {}
+        offset_date = offset_message = offset_topic = 0
+        for _ in range(MAX_TOPIC_PAGES):
+            page = await self.client.call({
+                "@type": "getForumTopics",
+                "chat_id": chat_id,
+                "query": "",
+                "offset_date": offset_date,
+                "offset_message_id": offset_message,
+                "offset_forum_topic_id": offset_topic,
+                "limit": TOPIC_PAGE,
+            })
+            fresh = [t for t in page.get("topics") or [] if topic_id(t) not in found]
+            found.update((topic_id(t), t) for t in fresh)
+            offset_date = page.get("next_offset_date", 0)
+            offset_message = page.get("next_offset_message_id", 0)
+            offset_topic = page.get("next_offset_forum_topic_id", 0)
+            if not fresh or not (offset_date or offset_message or offset_topic):
+                break
+        return sorted(found.values(), key=lambda t: (bool(t.get("is_pinned")), int(t.get("order") or 0)), reverse=True)
+
+    async def forum_topic(self, chat_id: int, topic: int) -> dict[str, Any]:
+        return await self.client.call({"@type": "getForumTopic", "chat_id": chat_id, "forum_topic_id": topic})
 
     async def mark_read(self, chat_id: int) -> None:
         chat = self.store.chats.get(chat_id) or {}
@@ -208,7 +244,7 @@ class TelegramSession:
     async def read_chat_list(self, key: str) -> None:
         await self.client.call({"@type": "readChatList", "chat_list": chat_list(key)})
 
-    async def send_text(self, chat_id: int, text: str, reply_to: int = 0) -> dict[str, Any]:
+    async def send_text(self, chat_id: int, text: str, reply_to: int = 0, topic: int = 0) -> dict[str, Any]:
         query: dict[str, Any] = {
             "@type": "sendMessage",
             "chat_id": chat_id,
@@ -218,6 +254,8 @@ class TelegramSession:
                 "clear_draft": True,
             },
         }
+        if topic:
+            query["topic_id"] = {"@type": "messageTopicForum", "forum_topic_id": topic}
         if reply_to:
             query["reply_to"] = {"@type": "inputMessageReplyToMessage", "message_id": reply_to}
         return await self.client.call(query)
@@ -259,6 +297,10 @@ class TelegramSession:
                         "new_id": message.get("id")})
         elif tag == "updateDeleteMessages" and not update.get("from_cache"):
             self._emit({"t": "deleted", "chat_id": update.get("chat_id"), "ids": update.get("message_ids") or []})
+        elif tag in TOPIC_UPDATES:
+            chat_id = update.get("chat_id") or (update.get("info") or {}).get("chat_id")
+            if chat_id:
+                self._emit({"t": "topics", "chat_id": chat_id})
         elif tag in ("updateConnectionState", "updateAuthorizationState"):
             self._emit({"t": "state"})
 

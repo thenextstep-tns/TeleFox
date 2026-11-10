@@ -554,8 +554,33 @@ def message_item(store: TdStore, chat: Json | None, message: Json, replied: Json
         "state": send_state(message, chat),
         "reactions": reactions,
         "album": str(message.get("media_album_id") or "0"),
+        "topic": topic_of(message),
         "views": interaction.get("view_count", 0) if channel_post else 0,
         "mention": bool(message.get("contains_unread_mention")),
+    }
+
+
+def topic_of(message: Json) -> int:
+    topic = message.get("topic_id") or {}
+    return int(topic.get("forum_topic_id") or 0) if topic.get("@type") == "messageTopicForum" else 0
+
+
+def topic_item(topic: Json) -> Json:
+    """One row of a group's topic list, as the phone's TopicsRoute draws it."""
+    info = topic.get("info") or {}
+    last = topic.get("last_message") or None
+    color = int((info.get("icon") or {}).get("color") or 0) & 0xFFFFFF
+    return {
+        "id": int(info.get("forum_topic_id") or 0),
+        "title": info.get("name", ""),
+        "preview": preview_of(last.get("content") or {})[0] if last else "",
+        "date": (last or {}).get("date", 0),
+        "unread": topic.get("unread_count", 0),
+        "mentions": topic.get("unread_mention_count", 0),
+        "color": f"#{color:06x}",
+        "pinned": bool(topic.get("is_pinned")),
+        "closed": bool(info.get("is_closed")),
+        "last_read_inbox": topic.get("last_read_inbox_message_id", 0),
     }
 
 

@@ -46,10 +46,12 @@ T = TypeVar("T")
 class SendBody(BaseModel):
     text: str
     reply_to: int = 0
+    topic: int = 0
 
 
 class ReadBody(BaseModel):
     ids: list[int]
+    topic: int = 0
 
 
 class ChatSettings(BaseModel):
@@ -181,13 +183,26 @@ def add_web_routes(app: FastAPI, service: Service) -> None:
             "last_read_inbox": found.get("last_read_inbox_message_id", 0),
         }
 
+    @app.get("/app/api/chats/{chat_id}/topics", dependencies=guard)
+    async def topics(chat_id: int) -> dict[str, Any]:
+        ready()
+        await chat_of(chat_id)
+        return {"topics": [model.topic_item(t) for t in await td(session.forum_topics(chat_id))]}
+
+    @app.get("/app/api/chats/{chat_id}/topics/{topic}", dependencies=guard)
+    async def topic(chat_id: int, topic: int) -> dict[str, Any]:
+        ready()
+        await chat_of(chat_id)
+        return {"topic": model.topic_item(await td(session.forum_topic(chat_id, topic)))}
+
     @app.get("/app/api/chats/{chat_id}/messages", dependencies=guard)
-    async def messages(chat_id: int, from_id: int = Query(0, alias="from"), offset: int = 0, limit: int = 40) -> dict[str, Any]:
+    async def messages(chat_id: int, from_id: int = Query(0, alias="from"), offset: int = 0, limit: int = 40,
+                       topic: int = 0) -> dict[str, Any]:
         ready()
         found = await chat_of(chat_id)
         limit = max(1, min(limit, PAGE_LIMIT))
         offset = max(-(limit - 1), min(offset, 0))
-        page = await td(session.history_page(chat_id, from_id, offset, limit))
+        page = await td(session.history_page(chat_id, from_id, offset, limit, max(topic, 0)))
         by_id = {m["id"]: m for m in page}
         wanted = sorted({rid for m in page if (rid := model.replied_id(m)) and rid not in by_id})
         if wanted:
@@ -218,7 +233,7 @@ def add_web_routes(app: FastAPI, service: Service) -> None:
         await chat_of(chat_id)
         ids = [i for i in body.ids if i > 0][:MAX_READ_IDS]
         if ids:
-            await td(session.view_messages(chat_id, ids))
+            await td(session.view_messages(chat_id, ids, max(body.topic, 0)))
         return {"ok": True}
 
     @app.post("/app/api/chats/{chat_id}/send", dependencies=guard)
@@ -230,7 +245,7 @@ def add_web_routes(app: FastAPI, service: Service) -> None:
             raise HTTPException(status_code=400, detail="empty message")
         if len(text) > MAX_TEXT:
             raise HTTPException(status_code=400, detail="message too long")
-        sent = await td(session.send_text(chat_id, text, max(body.reply_to, 0)))
+        sent = await td(session.send_text(chat_id, text, max(body.reply_to, 0), max(body.topic, 0)))
         return {"message": model.message_item(store, found, sent)}
 
     @app.post("/app/api/chats/{chat_id}/settings", dependencies=guard)

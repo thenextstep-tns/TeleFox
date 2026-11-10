@@ -243,6 +243,9 @@ a { color:inherit; }
 .field input { flex:1; background:none; border:0; outline:none; color:var(--text); font-size:16px; }
 .note { flex:1; display:grid; place-items:center; padding:32px; color:var(--text2); font-size:15px; text-align:center; }
 .scroll { flex:1; overflow-y:auto; }
+.topic-all { color:var(--accent); font-size:16px; padding:14px 16px; cursor:pointer; }
+.topic-all:hover, .topic-row:hover { background:var(--hover); }
+.topic-row { display:flex; align-items:center; gap:12px; padding:10px 16px; cursor:pointer; }
 .case-row { padding:12px 16px; cursor:pointer; border-bottom:1px solid var(--border); }
 .case-row:hover { background:var(--hover); }
 .case-top { display:flex; align-items:center; gap:8px; }
@@ -648,7 +651,8 @@ function renderList(force) {
   const old = force ? new Map() : listEls.rows;
   const next = new Map();
   const kids = [];
-  const selected = CV ? CV.id : null;
+  const route = topRoute();
+  const selected = route && (route.name === "chat" || route.name === "topics") ? route.id : null;
   for (const chat of list) {
     const sig = JSON.stringify(chat) + (chat.id === selected ? "*" : "");
     let rec = old.get(chat.id);
@@ -687,7 +691,8 @@ function chatRow(chat, selected) {
       : chat.pinned ? h("span", { style: "margin-left:6px;color:var(--text2);display:flex" }, icon("pin", 18)) : null);
   return h("div", {
     class: "row" + (selected ? " sel" : ""),
-    onclick: () => openChat(chat.id),
+    // A group with topics opens on its list of topics, as on the phone.
+    onclick: () => openFromList(chat.forum ? { name: "topics", id: chat.id, title: chat.title } : { name: "chat", id: chat.id }),
     oncontextmenu: e => { e.preventDefault(); chatSheet(chat, S.folder); },
   }, avatar(chat.title, chat.photo, chat.color, 56, chat.kind), h("div", { class: "rb" }, line1, bottom));
 }
@@ -721,22 +726,31 @@ window.addEventListener("popstate", e => {
   S.stack = (e.state && e.state.stack) || [];
   renderMain();
 });
-function openChat(id) {
-  const current = topRoute();
-  if (current && current.name === "chat" && current.id === id) return;
-  if (current && current.name === "chat") go({ name: "chat", id }, true);
-  else if (S.stack.length && matchMedia("(min-width: 900px)").matches) setStack([{ name: "chat", id }], "replace");
-  else go({ name: "chat", id });
+function sameRoute(a, b) {
+  return !!a && !!b && a.name === b.name && a.id === b.id && (a.topic || 0) === (b.topic || 0);
+}
+// From the chat list: whatever was open on the right is replaced, not stacked.
+function openFromList(route) {
+  if (sameRoute(topRoute(), route)) return;
+  if (S.stack.length) setStack([route], "replace");
+  else go(route);
+}
+// From inside a screen (a case, a topic list): back returns to that screen.
+function openChat(id, topic = 0, title = null) {
+  const route = topic ? { name: "chat", id, topic, title } : { name: "chat", id };
+  if (!sameRoute(topRoute(), route)) go(route);
 }
 function renderMain() {
   const route = topRoute();
   document.body.classList.toggle("routed", !!route);
-  if (!route || route.name !== "chat" || !CV || CV.id !== route.id) closeChatView();
+  if (!route || route.name !== "chat" || !CV || CV.id !== route.id || CV.topic !== (route.topic || 0)) closeChatView();
+  TV = null;
   if (!route) {
     mainPane.replaceChildren(h("div", { class: "empty-main" }, h("div", { class: "svc", text: "Выберите чат" })));
   } else if (route.name === "chat") {
-    if (!CV || CV.id !== route.id) openChatView(route.id);
-  } else if (route.name === "cases") casesScreen();
+    if (!CV) openChatView(route.id, route.topic || 0, route.title || null);
+  } else if (route.name === "topics") topicsScreen(route.id, route.title);
+  else if (route.name === "cases") casesScreen();
   else if (route.name === "case") caseScreen(route.id);
   else if (route.name === "review") reviewScreen();
   else if (route.name === "ai") aiChatsScreen();
@@ -878,19 +892,22 @@ document.addEventListener("keydown", e => {
 
 // ---------- one open chat ----------
 let CV = null;
+// A topic of a group opens as a chat of its own; these say which one for every call.
+const topicQuery = view => view.topic ? `&topic=${view.topic}` : "";
+const draftKey = view => `${view.id}:${view.topic}`;
 function closeChatView() {
   if (!CV) return;
   const view = CV;
   CV = null;
   view.readObserver.disconnect();
-  if (view.textarea) S.drafts[view.id] = view.textarea.value;
+  if (view.textarea) S.drafts[draftKey(view)] = view.textarea.value;
   api(`/app/api/chats/${view.id}/close`, { method: "POST", keepalive: true }).catch(() => {});
 }
-async function openChatView(id) {
+async function openChatView(id, topic = 0, topicTitle = null) {
   closeChatView();
   const view = {
-    id, chat: null, subtitle: null, lastRead: 0, msgs: new Map(), rows: new Map(), oldest: false, loadingOlder: false,
-    replyTo: null, firstUnread: null, stickBottom: true, pendingRead: new Set(), sentRead: 0,
+    id, topic, topicTitle, chat: null, subtitle: null, lastRead: 0, unread: 0, msgs: new Map(), rows: new Map(),
+    oldest: false, loadingOlder: false, replyTo: null, firstUnread: null, stickBottom: true, pendingRead: new Set(),
   };
   CV = view;
   view.head = h("div", { class: "chead" });
@@ -914,11 +931,16 @@ async function openChatView(id) {
   renderComposer();
   renderList();
   try {
-    const detail = await api(`/app/api/chats/${id}`);
+    const [detail, topicInfo] = await Promise.all([
+      api(`/app/api/chats/${id}`),
+      topic ? api(`/app/api/chats/${id}/topics/${topic}`).then(r => r.topic) : Promise.resolve(null),
+    ]);
     if (CV !== view) return;
     view.chat = detail.chat;
     view.subtitle = detail.subtitle;
-    view.lastRead = detail.last_read_inbox || 0;
+    view.lastRead = topicInfo ? topicInfo.last_read_inbox : detail.last_read_inbox || 0;
+    view.unread = topicInfo ? topicInfo.unread : detail.chat.unread;
+    if (topicInfo) view.topicTitle = topicInfo.title;
     renderHeader();
     post(`/app/api/chats/${id}/open`).catch(() => {});
     await loadNewest(true);
@@ -930,10 +952,14 @@ async function refreshHeader() {
   const view = CV;
   if (!view) return;
   try {
-    const detail = await api(`/app/api/chats/${view.id}`);
+    const [detail, topicInfo] = await Promise.all([
+      api(`/app/api/chats/${view.id}`),
+      view.topic ? api(`/app/api/chats/${view.id}/topics/${view.topic}`).then(r => r.topic) : Promise.resolve(null),
+    ]);
     if (CV !== view) return;
     view.chat = detail.chat;
     view.subtitle = detail.subtitle;
+    view.unread = topicInfo ? topicInfo.unread : detail.chat.unread;
     renderHeader();
   } catch {}
 }
@@ -942,13 +968,15 @@ function renderHeader() {
   if (!view || !view.chat) return;
   const chat = view.chat;
   const sub = view.subtitle || { text: "" };
-  const subText = sub.seen ? `${sub.text} ${listTime(sub.seen)}` : sub.text;
+  // In a topic the topic is the title and its group the line under it, as on the phone.
+  const title = view.topic ? view.topicTitle || "Тема" : chat.title;
+  const subText = view.topic ? chat.title : sub.seen ? `${sub.text} ${listTime(sub.seen)}` : sub.text;
   view.head.replaceChildren(h("div", { class: "chead-row" },
     iconButton("back", "Назад", back),
     h("div", { class: "chead-main", onclick: () => chatSheet(chat, "main") },
-      avatar(chat.title, chat.photo, chat.color, 40, chat.kind),
+      avatar(title, chat.photo, chat.color, 40, chat.kind),
       h("div", { style: "min-width:0" },
-        h("div", { class: "chead-title", text: chat.title }),
+        h("div", { class: "chead-title", text: title }),
         subText ? h("div", { class: "chead-sub", text: subText }) : null)),
     iconButton("more", "Ещё", () => chatSheet(chat, "main"))));
   const label = chat.label;
@@ -958,14 +986,14 @@ function renderHeader() {
   }
   const badge = view.down.querySelector(".badge");
   if (badge) badge.remove();
-  if (chat.unread > 0) view.down.append(h("span", { class: "badge small", text: count(chat.unread) }));
+  if (view.unread > 0) view.down.append(h("span", { class: "badge small", text: count(view.unread) }));
 }
 function sortedIds(view) { return [...view.msgs.keys()].sort((a, b) => a - b); }
 async function loadNewest(initial) {
   const view = CV;
   if (!view) return;
   let page;
-  try { page = (await api(`/app/api/chats/${view.id}/messages?limit=50`)).messages; } catch { return; }
+  try { page = (await api(`/app/api/chats/${view.id}/messages?limit=50${topicQuery(view)}`)).messages; } catch { return; }
   if (CV !== view) return;
   if (page.length) {
     const ids = new Set(page.map(m => m.id));
@@ -992,8 +1020,7 @@ async function loadNewest(initial) {
   }
 }
 async function findUnread(view) {
-  const unread = view.chat ? view.chat.unread : 0;
-  if (!unread || !view.lastRead) return;
+  if (!view.unread || !view.lastRead) return;
   // Load back to the last read message, a few pages at most, so the unread line can sit where it belongs.
   for (let round = 0; round < 4 && !view.oldest; round++) {
     const ids = sortedIds(view);
@@ -1007,7 +1034,7 @@ async function loadOlderPage(view) {
   const from = sortedIds(view)[0] || 0;
   if (!from) { view.oldest = true; return; }
   let page;
-  try { page = (await api(`/app/api/chats/${view.id}/messages?from=${from}&limit=50`)).messages; } catch { return; }
+  try { page = (await api(`/app/api/chats/${view.id}/messages?from=${from}&limit=50${topicQuery(view)}`)).messages; } catch { return; }
   if (CV !== view) return;
   const before = view.msgs.size;
   for (const m of page) view.msgs.set(m.id, m);
@@ -1504,7 +1531,7 @@ async function flushRead() {
   view.pendingRead.clear();
   if (!ids.length) return;
   view.lastRead = Math.max(view.lastRead, ...ids);
-  try { await post(`/app/api/chats/${view.id}/read`, { ids }); } catch {}
+  try { await post(`/app/api/chats/${view.id}/read`, { ids, topic: view.topic }); } catch {}
 }
 window.addEventListener("focus", scheduleRead);
 document.addEventListener("visibilitychange", scheduleRead);
@@ -1514,7 +1541,7 @@ function renderComposer() {
   const view = CV;
   const target = h("div");
   const textarea = h("textarea", { rows: 1, placeholder: "Сообщение", "aria-label": "Сообщение" });
-  textarea.value = S.drafts[view.id] || "";
+  textarea.value = S.drafts[draftKey(view)] || "";
   const sendBtn = h("button", { class: "send", title: "Отправить", "aria-label": "Отправить", onclick: () => send() }, icon("send"));
   const grow = () => {
     textarea.style.height = "52px";
@@ -1555,11 +1582,11 @@ async function send() {
   if (text.length > 4096) { toast("Слишком длинное сообщение"); return; }
   const reply = view.replyTo;
   view.textarea.value = "";
-  S.drafts[view.id] = "";
+  S.drafts[draftKey(view)] = "";
   view.grow();
   setReply(null);
   try {
-    const result = await post(`/app/api/chats/${view.id}/send`, { text, reply_to: reply ? reply.id : 0 });
+    const result = await post(`/app/api/chats/${view.id}/send`, { text, reply_to: reply ? reply.id : 0, topic: view.topic });
     if (CV === view && result.message) {
       view.msgs.set(result.message.id, result.message);
       view.stickBottom = true;
@@ -1579,6 +1606,38 @@ function screenBar(title) {
 }
 function emptyNote(text) { return h("div", { class: "note", text }); }
 const OFFLINE = "Не удалось получить данные с сервера.";
+
+// A group with topics: "all messages", then each topic, pinned first, as the phone's TopicsRoute.
+let TV = null;
+function topicsScreen(chatId, title) {
+  const body = h("div", { class: "scroll" });
+  mainPane.replaceChildren(h("div", { class: "screen" }, screenBar(title || "Темы"), body));
+  const view = { chatId, loaded: false };
+  TV = view;
+  view.load = async () => {
+    let topics;
+    try { topics = (await api(`/app/api/chats/${chatId}/topics`)).topics; }
+    catch { if (TV === view && !view.loaded) body.replaceChildren(emptyNote("Не удалось загрузить темы.")); return; }
+    if (TV !== view) return;
+    view.loaded = true;
+    body.replaceChildren(
+      h("div", { class: "topic-all", text: "Все сообщения", onclick: () => openChat(chatId) }),
+      ...topics.map(topic => topicRow(chatId, topic)));
+  };
+  view.load();
+}
+function topicRow(chatId, topic) {
+  const color = topic.color && topic.color !== "#000000" ? topic.color : avatarColor(topic.id);
+  return h("div", { class: "topic-row", onclick: () => openChat(chatId, topic.id, topic.title) },
+    h("div", { class: "av", style: `width:40px;height:40px;font-size:17px;background:${color}`, text: (Array.from(topic.title)[0] || "#").toUpperCase() }),
+    h("div", { class: "rb", style: "gap:2px" },
+      h("div", { class: "rl" },
+        h("span", { class: "rtitle", style: "font-size:16px;flex:1", text: topic.title }),
+        h("span", { class: "rtime", style: "font-size:12px;margin-left:8px", text: listTime(topic.date) })),
+      h("div", { class: "rl" },
+        h("span", { class: "prev", style: "font-size:14px", text: topic.preview }),
+        topic.unread > 0 ? h("span", { class: "badge small" + (topic.mentions > 0 ? "" : " muted"), style: "margin-left:8px", text: count(topic.unread) }) : null)));
+}
 
 function casesScreen() {
   let closed = false;
@@ -1759,6 +1818,11 @@ function connectEvents() {
       case "messages":
       case "sent":
         if (CV && event.chat_id === CV.id) debounce("newest", () => loadNewest(false), 150);
+        if (TV && event.chat_id === TV.chatId) debounce("topics", TV.load, 300);
+        break;
+      case "topics":
+        if (TV && event.chat_id === TV.chatId) debounce("topics", TV.load, 300);
+        if (CV && CV.topic && event.chat_id === CV.id) debounce("head", refreshHeader, 500);
         break;
       case "deleted":
         if (CV && event.chat_id === CV.id) { for (const mid of event.ids) CV.msgs.delete(mid); renderFeed(); }
