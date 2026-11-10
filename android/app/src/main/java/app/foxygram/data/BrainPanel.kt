@@ -39,11 +39,24 @@ data class BrainRun(
     val summary: String,
 )
 
-/** Brain's side panel for a chat. Only chats in at least one of Brain's jobs are active. */
-data class BrainPanel(val active: Boolean, val jobs: List<BrainPanelJob>, val items: List<BrainRun>) {
+/**
+ * Brain's side panel for a chat. Only chats in at least one of Brain's jobs are active.
+ * [waiting] holds messages Brain has received but not started on yet (it waits about 20 s for more), as TDLib ids.
+ */
+data class BrainPanel(
+    val active: Boolean,
+    val jobs: List<BrainPanelJob>,
+    val items: List<BrainRun>,
+    val waiting: List<Long> = emptyList(),
+) {
     val pausedJobs: List<BrainPanelJob> get() = jobs.filter { it.paused }
 
+    /** Brain is busy: a run is going, or it holds messages it hasn't started on. */
+    val busy: Boolean get() = waiting.isNotEmpty() || items.any { it.working }
+
     fun runsFor(messageIds: Collection<Long>): List<BrainRun> = items.filter { run -> run.messageIds.any { it in messageIds } }
+
+    fun isWaiting(messageIds: Collection<Long>): Boolean = messageIds.any { it in waiting }
 
     /** The mark each analysed message gets: still working, waiting for the owner, failed, or done. */
     fun marks(): Map<Long, BrainMark> {
@@ -60,6 +73,7 @@ data class BrainPanel(val active: Boolean, val jobs: List<BrainPanelJob>, val it
                 if (current == null || mark.ordinal < current.ordinal) marks[id] = mark
             }
         }
+        for (id in waiting) marks[id] = BrainMark.Working
         return marks
     }
 }
@@ -78,6 +92,7 @@ fun parseBrainPanel(body: String): BrainPanel {
             jobs.getJSONObject(index).let { BrainPanelJob(it.getString("id"), it.optString("name", it.getString("id")), it.optBoolean("paused")) }
         },
         items = (0 until items.length()).map { index -> parseRun(items.getJSONObject(index)) },
+        waiting = json.optJSONArray("waiting")?.let { ids -> (0 until ids.length()).map { ids.getLong(it) } } ?: emptyList(),
     )
 }
 

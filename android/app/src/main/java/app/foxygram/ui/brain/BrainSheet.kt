@@ -142,7 +142,11 @@ fun BrainPanelContent(
             }
             val runs = panel.runsFor(selectedIds)
             if (runs.isEmpty()) {
-                Hint("Brain не разбирал это сообщение." + if (panel.pausedJobs.isNotEmpty()) " Пока работа на паузе, новые сообщения не разбираются." else "")
+                if (panel.isWaiting(selectedIds)) {
+                    Hint("Brain разбирает это сообщение… Обычно это занимает до минуты.")
+                } else {
+                    Hint("Brain не разбирал это сообщение." + if (panel.pausedJobs.isNotEmpty()) " Пока работа на паузе, новые сообщения не разбираются." else "")
+                }
             }
             runs.forEach { RunCard(it, null, onDecide) }
             TextButton(onShowAll, Modifier.padding(start = 0.dp)) { Text("Все разборы в этом чате", color = colors.accent) }

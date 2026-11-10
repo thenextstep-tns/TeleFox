@@ -139,7 +139,7 @@ fun ChatRoute(telegram: Telegram, chatId: Long, onBack: () -> Unit, navigate: (R
                         brainError = null
                     }
                     .onFailure { if (brain != null) brainError = it.message }
-                delay(if (brain?.items?.any { it.working } == true) BRAIN_BUSY_MS else BRAIN_IDLE_MS)
+                delay(if (brain?.busy == true) BRAIN_BUSY_MS else BRAIN_IDLE_MS)
             }
         }
     }
@@ -182,6 +182,7 @@ fun ChatRoute(telegram: Telegram, chatId: Long, onBack: () -> Unit, navigate: (R
                 if (brain != null) {
                     brainMessage = item
                     brainOpen = true
+                    brainRefresh++ // fresh from Brain right away, not on the next timer
                 } else {
                     selected = item
                 }
@@ -308,6 +309,7 @@ fun ChatRoute(telegram: Telegram, chatId: Long, onBack: () -> Unit, navigate: (R
                         brainMessage = item
                         brainOpen = true
                         selected = null
+                        brainRefresh++
                     }
                 }
                 val text = (item.body as? MessageBody.Text)?.text?.text ?: item.body.caption.text

@@ -81,6 +81,8 @@ def brain_panel(chat: dict[str, Any], status: dict[str, Any], analysis: dict[str
         "active": True,
         "jobs": [{"id": job, "name": names.get(job, job), "paused": job in paused} for job in chat["chat"]["jobs"]],
         "items": items,
+        # Messages Brain has received but not yet started on (it waits about 20 s for more), as TDLib ids.
+        "waiting": [to_tdlib(int(m)) for m in analysis.get("waiting") or []],
     }
 
 

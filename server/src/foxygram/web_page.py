@@ -1692,7 +1692,13 @@ async function loadBrainPanel(view) {
   if (!typing) renderBrainPanel(view);
   applyBrainMarks(view);
   if (created) renderHeader();
-  const working = view.brain.items.some(item => item.working);
+  // Look again soon while Brain is working, while it holds messages it hasn't started on, or while the message you
+  // clicked is new and hasn't been analysed yet.
+  const sel = view.brainSelected || [];
+  const selMsg = sel.map(id => view.msgs.get(id)).find(Boolean);
+  const selPending = sel.length > 0 && !view.brain.items.some(i => i.messageIds.some(id => sel.includes(id)))
+    && !!selMsg && Date.now() / 1000 - selMsg.date < 120;
+  const working = view.brain.items.some(item => item.working) || (view.brain.waiting || []).length > 0 || selPending;
   scheduleBrain(view, document.hidden ? 30000 : working ? 4000 : 15000);
 }
 function ensureBrainPanel(view) {
@@ -1716,6 +1722,7 @@ function selectBrainMessage(view, ids) {
   toggleBrainPanel(view, true);
   renderBrainPanel(view);
   applyBrainMarks(view);
+  loadBrainPanel(view); // fresh from Brain right away, not on the next timer
 }
 function brainState(view) {
   const byMessage = new Map();
@@ -1729,6 +1736,12 @@ function brainState(view) {
       s.failed = s.failed || failed;
       byMessage.set(id, s);
     }
+  }
+  // Received by Brain but not started yet: shown as working too.
+  for (const id of (view.brain && view.brain.waiting) || []) {
+    const s = byMessage.get(id) || { working: false, open: false, failed: false };
+    s.working = true;
+    byMessage.set(id, s);
   }
   return byMessage;
 }
@@ -1784,7 +1797,13 @@ function renderBrainPanel(view) {
     }
     if (!items.length) {
       const paused = brain.jobs.some(j => j.paused);
-      kids.push(h("div", { class: "bp-hint", text: "Brain не разбирал это сообщение." + (paused ? " Пока работа на паузе, новые сообщения не разбираются." : "") }));
+      const waiting = (brain.waiting || []).some(id => selected.includes(id));
+      const fresh = !!message && Date.now() / 1000 - message.date < 120;
+      if (waiting || (fresh && !paused)) {
+        kids.push(h("div", { class: "bp-hint" }, h("span", { class: "spin-sm" }), " Brain разбирает это сообщение… Обычно это занимает до минуты."));
+      } else {
+        kids.push(h("div", { class: "bp-hint", text: "Brain не разбирал это сообщение." + (paused ? " Пока работа на паузе, новые сообщения не разбираются." : "") }));
+      }
     }
     for (const item of items) kids.push(brainRun(view, item, false));
     kids.push(h("button", { class: "tbtn", style: "margin-left:-12px", text: "Все разборы в этом чате",

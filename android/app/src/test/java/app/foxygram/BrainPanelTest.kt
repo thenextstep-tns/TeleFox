@@ -70,6 +70,14 @@ class BrainPanelTest {
         assertEquals(BrainMark.Waiting, panel.marks()[101L shl 20])
     }
 
+    @Test fun messagesBrainHasNotStartedOnShowAsWorking() {
+        val panel = parseBrainPanel("""{"active": true, "jobs": [], "items": [], "waiting": [${130000L shl 20}]}""")
+        assertTrue(panel.busy)
+        assertTrue(panel.isWaiting(listOf(130000L shl 20)))
+        assertEquals(BrainMark.Working, panel.marks()[130000L shl 20])
+        assertTrue(!parseBrainPanel(PANEL.replace("\"working\": true", "\"working\": false")).busy)
+    }
+
     @Test fun brainTimesAreLocal() {
         assertEquals("", brainTime("not a time"))
         assertTrue(brainTime("2026-11-10 18:31:18").endsWith("18:31"))

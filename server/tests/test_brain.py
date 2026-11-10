@@ -56,7 +56,7 @@ class FakeBrain(BaseHTTPRequestHandler):
             chat_id = self.path.split("chatId=")[1]
             return self.reply(200, {"jobs": JOBS, "connected": True, "chat": self.chat(chat_id)})
         if self.path.startswith("/brain/api/chat-analysis?"):
-            return self.reply(200, {"chatId": "-5534970202", "items": [ANALYSIS]})
+            return self.reply(200, {"chatId": "-5534970202", "items": [ANALYSIS], "waiting": [103]})
         if self.path == "/brain/api/status":
             return self.reply(200, {"jobs": [{"id": "job1", "paused": False}, {"id": "job2", "paused": True}], "running": 0, "open": 1})
         if self.path == "/brain/api/decide":
@@ -211,6 +211,7 @@ async def test_the_panel_shows_only_for_chats_in_a_job(service, brain_url, brain
     assert item["telegramMessageIds"] == [101, 102]
     assert item["messageIds"] == [101 << 20, 102 << 20]
     assert item["actions"][0]["text"] == "Got it" and item["decisions"][0]["text"] == "This needs a reply."
+    assert panel["waiting"] == [103 << 20]  # received by Brain, not started yet
     asked = [a["path"] for a in FakeBrain.seen]
     assert any(p.startswith("/brain/api/chat-analysis?chatId=-5534970202") for p in asked)
 
