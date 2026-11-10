@@ -32,7 +32,9 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Forward
 import androidx.compose.material.icons.automirrored.filled.Reply
@@ -41,6 +43,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Photo
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -49,10 +52,12 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -62,24 +67,35 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import app.foxygram.data.BrainPanel
 import app.foxygram.model.FeedRow
 import app.foxygram.model.MessageBody
 import app.foxygram.model.MessageItem
 import app.foxygram.td.ChatSession
 import app.foxygram.td.Telegram
 import app.foxygram.ui.Route
+import app.foxygram.ui.brain.BrainMessagePreview
+import app.foxygram.ui.brain.BrainPanelContent
+import app.foxygram.ui.brain.LocalBrainMarks
 import app.foxygram.ui.common.Avatar
+import app.foxygram.ui.common.clockTime
 import app.foxygram.ui.theme.Foxy
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.drinkless.tdlib.TdApi
 import java.io.File
+
+private const val BRAIN_BUSY_MS = 4_000L
+private const val BRAIN_IDLE_MS = 15_000L
 
 private val QUICK_REACTIONS = listOf("👍", "❤", "🔥", "🥰", "👏", "😁")
 
@@ -104,6 +120,30 @@ fun ChatRoute(telegram: Telegram, chatId: Long, onBack: () -> Unit, navigate: (R
     var showAttach by remember { mutableStateOf(false) }
     var recordingSeconds by remember { mutableStateOf<Int?>(null) }
     var recorder by remember { mutableStateOf<VoiceRecorder?>(null) }
+
+    // Brain's side panel: only for chats in one of Brain's jobs, read through the laptop while this screen is in front.
+    val api = telegram.serverApi
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var brain by remember(chatId) { mutableStateOf<BrainPanel?>(null) }
+    var brainError by remember(chatId) { mutableStateOf<String?>(null) }
+    var brainOpen by remember(chatId) { mutableStateOf(false) }
+    var brainMessage by remember(chatId) { mutableStateOf<MessageItem?>(null) }
+    var brainRefresh by remember(chatId) { mutableIntStateOf(0) }
+    LaunchedEffect(chatId, brainRefresh) {
+        if (!api.configured) return@LaunchedEffect
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                runCatching { api.brainPanel(chatId) }
+                    .onSuccess { panel ->
+                        brain = panel.takeIf { it.active }
+                        brainError = null
+                    }
+                    .onFailure { if (brain != null) brainError = it.message }
+                delay(if (brain?.items?.any { it.working } == true) BRAIN_BUSY_MS else BRAIN_IDLE_MS)
+            }
+        }
+    }
+    val brainMarks = remember(brain) { brain?.marks() ?: emptyMap() }
 
     DisposableEffect(chatId) {
         session.open()
@@ -137,7 +177,15 @@ fun ChatRoute(telegram: Telegram, chatId: Long, onBack: () -> Unit, navigate: (R
 
     val actions = remember(session) {
         object : MessageActions {
-            override fun onTap(item: MessageItem) { selected = item }
+            override fun onTap(item: MessageItem) {
+                // In a chat Brain analyses, a tap shows what Brain made of the message; long press keeps the usual menu.
+                if (brain != null) {
+                    brainMessage = item
+                    brainOpen = true
+                } else {
+                    selected = item
+                }
+            }
             override fun onLongPress(item: MessageItem) { selected = item }
             override fun onReply(item: MessageItem) { mode = replyMode(item) }
             override fun onJumpTo(messageId: Long) {
@@ -157,6 +205,7 @@ fun ChatRoute(telegram: Telegram, chatId: Long, onBack: () -> Unit, navigate: (R
     }
 
     val header = headerState ?: return
+    CompositionLocalProvider(LocalBrainMarks provides brainMarks) {
     ChatScreen(
         header = header,
         feed = feed,
@@ -169,6 +218,14 @@ fun ChatRoute(telegram: Telegram, chatId: Long, onBack: () -> Unit, navigate: (R
         onLoadNewer = session::loadNewer,
         onVisibleMessages = session::onVisible,
         onScrollToBottom = session::jumpToLatest,
+        onBrain = if (brain != null) {
+            {
+                brainMessage = null
+                brainOpen = true
+            }
+        } else {
+            null
+        },
         composer = {
             Box(Modifier.fillMaxWidth()) {
                 Composer(
@@ -220,6 +277,7 @@ fun ChatRoute(telegram: Telegram, chatId: Long, onBack: () -> Unit, navigate: (R
             }
         },
     )
+    }
     LaunchedEffect(recorder) {
         while (recorder != null) {
             delay(1000)
@@ -244,6 +302,13 @@ fun ChatRoute(telegram: Telegram, chatId: Long, onBack: () -> Unit, navigate: (R
                 ActionRow(Icons.AutoMirrored.Filled.Reply, "Ответить") {
                     mode = replyMode(item)
                     selected = null
+                }
+                if (brain != null) {
+                    ActionRow(Icons.Filled.SmartToy, "Что решил Brain") {
+                        brainMessage = item
+                        brainOpen = true
+                        selected = null
+                    }
                 }
                 val text = (item.body as? MessageBody.Text)?.text?.text ?: item.body.caption.text
                 if (text.isNotEmpty()) {
@@ -270,6 +335,32 @@ fun ChatRoute(telegram: Telegram, chatId: Long, onBack: () -> Unit, navigate: (R
                     }
                 }
             }
+        }
+    }
+
+    if (brainOpen) {
+        ModalBottomSheet({ brainOpen = false }, containerColor = colors.surface) {
+            val message = brainMessage
+            BrainPanelContent(
+                panel = brain,
+                error = brainError,
+                selectedIds = message?.let { it.groupIds.ifEmpty { listOf(it.id) } },
+                preview = message?.let { brainPreview(it, header.chat.title) },
+                onShowAll = { brainMessage = null },
+                onJump = { run ->
+                    brainOpen = false
+                    run.messageIds.firstOrNull()?.let(actions::onJumpTo)
+                },
+                onDecide = { action, decision, text, reason ->
+                    scope.launch {
+                        runCatching { api.brainDecide(action.id, decision, text, reason) }
+                            .onSuccess { Toast.makeText(context, it.ifBlank { "Готово" }, Toast.LENGTH_SHORT).show() }
+                            .onFailure { Toast.makeText(context, "Не удалось: ${it.message}", Toast.LENGTH_LONG).show() }
+                        brainRefresh++
+                    }
+                },
+                modifier = Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(WindowInsets.navigationBars),
+            )
         }
     }
 
@@ -431,4 +522,11 @@ class VoiceRecorder(private val context: Context) {
             null
         }
     }
+}
+
+/** The tapped message, for the top of Brain's sheet. */
+private fun brainPreview(item: MessageItem, chatTitle: String): BrainMessagePreview {
+    val who = if (item.outgoing) "Вы" else item.sender?.name ?: chatTitle
+    val text = (item.body as? MessageBody.Text)?.text?.text ?: item.body.caption.text
+    return BrainMessagePreview(who, clockTime(item.date), text.ifBlank { "(без текста)" })
 }

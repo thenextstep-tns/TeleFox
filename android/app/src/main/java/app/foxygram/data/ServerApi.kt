@@ -189,6 +189,17 @@ class ServerApi(private val settings: Settings) {
     suspend fun resetBrainJobs(chatId: Long): BrainChange =
         parseBrainChange(request("POST", "/v1/brain/chats/$chatId/reset", JSONObject()))
 
+    /** Brain's side panel for a chat: inactive unless the chat is in one of Brain's jobs. */
+    suspend fun brainPanel(chatId: Long): BrainPanel = parseBrainPanel(request("GET", "/v1/brain/chats/$chatId/panel"))
+
+    /** The owner's answer to something Brain proposed; Brain's rules apply, nothing is sent without "approve". */
+    suspend fun brainDecide(actionId: Long, decision: String, text: String? = null, reason: String? = null): String {
+        val body = JSONObject().put("decision", decision)
+        if (text != null) body.put("text", text)
+        if (reason != null) body.put("reason", reason)
+        return JSONObject(request("POST", "/v1/brain/actions/$actionId/decide", body)).optString("text")
+    }
+
     private fun parseBrainChange(text: String): BrainChange {
         val json = JSONObject(text)
         return BrainChange(json.optString("text"), parseBrainChat(json.getJSONObject("chat")))

@@ -1644,9 +1644,9 @@ const BRAIN_COLOR = { open: "var(--warning)", failed: "var(--danger)", executed:
 S.brainChats = LS.get("brainChats", {});
 
 function brainEpoch(at) {
-  // Brain's times are SQLite's UTC "YYYY-MM-DD HH:MM:SS", or ISO.
+  // Brain writes "YYYY-MM-DD HH:MM:SS" in this PC's local time; without a zone the browser reads it as local too.
   const text = String(at || "");
-  const iso = /^\d{4}-\d\d-\d\d \d\d:\d\d(:\d\d)?$/.test(text) ? text.replace(" ", "T") + "Z" : text;
+  const iso = /^\d{4}-\d\d-\d\d \d\d:\d\d(:\d\d)?$/.test(text) ? text.replace(" ", "T") : text;
   const ms = Date.parse(iso);
   return Number.isNaN(ms) ? 0 : Math.floor(ms / 1000);
 }

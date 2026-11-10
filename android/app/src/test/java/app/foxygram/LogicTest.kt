@@ -1,5 +1,10 @@
 package app.foxygram
 
+import app.foxygram.data.BrainAction
+import app.foxygram.data.BrainMark
+import app.foxygram.data.BrainPanel
+import app.foxygram.data.BrainPanelJob
+import app.foxygram.data.BrainRun
 import app.foxygram.model.ChatKind
 import app.foxygram.model.FeedRow
 import app.foxygram.model.ImageRef
@@ -91,5 +96,35 @@ class LogicTest {
     @Test fun unreadMarkerSitsJustAboveTheFirstUnread() {
         val feed = buildFeed(listOf(message(2, alice, day + 10), message(1, alice, day)), ChatKind.Group, 2)
         assertTrue(feed[1] is FeedRow.UnreadMarker)
+    }
+
+    private fun brainRun(id: Long, ids: List<Long>, working: Boolean = false, status: String = "done", actionStatus: String? = null) = BrainRun(
+        runId = id, jobName = "Job 2", at = "2026-11-10 18:31:18", messageIds = ids, status = status, working = working,
+        decisions = listOf("decided"), summary = "",
+        actions = listOfNotNull(actionStatus?.let {
+            BrainAction(id * 10, "approval", "telegram.send", it, "Test Group", "Got it", null, emptyList(), null, null, null)
+        }),
+    )
+
+    @Test fun brainMarksEachAnalysedMessageWithItsMostPressingState() {
+        val panel = BrainPanel(true, listOf(BrainPanelJob("job2", "Job 2", false)), listOf(
+            brainRun(1, listOf(101L shl 20, 102L shl 20), actionStatus = "executed"),
+            brainRun(2, listOf(102L shl 20), actionStatus = "open"),
+            brainRun(3, listOf(103L shl 20), working = true),
+            brainRun(4, listOf(104L shl 20), status = "error"),
+        ))
+        val marks = panel.marks()
+        assertEquals(BrainMark.Done, marks[101L shl 20])
+        assertEquals(BrainMark.Waiting, marks[102L shl 20])
+        assertEquals(BrainMark.Working, marks[103L shl 20])
+        assertEquals(BrainMark.Failed, marks[104L shl 20])
+        assertEquals(null, marks[105L shl 20])
+    }
+
+    @Test fun brainFindsEveryRunAboutAMessageOrAlbum() {
+        val panel = BrainPanel(true, emptyList(), listOf(brainRun(7, listOf(129446L shl 20)), brainRun(8, listOf(5L shl 20, 6L shl 20))))
+        assertEquals(listOf(7L), panel.runsFor(listOf(129446L shl 20)).map { it.runId })
+        assertEquals(listOf(8L), panel.runsFor(listOf(6L shl 20, 9L)).map { it.runId })
+        assertTrue(panel.runsFor(listOf(129446L)).isEmpty())
     }
 }

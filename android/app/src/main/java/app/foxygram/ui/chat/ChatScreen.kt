@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -73,12 +74,13 @@ fun ChatScreen(
     onScrollToBottom: () -> Unit,
     composer: @Composable () -> Unit,
     modifier: Modifier = Modifier,
+    onBrain: (() -> Unit)? = null,
 ) {
     val colors = Foxy.colors
     val isGroup = header.chat.kind == ChatKind.Group
     val scope = rememberCoroutineScope()
     Column(modifier.fillMaxSize().background(colors.background).windowInsetsPadding(WindowInsets.navigationBars).imePadding()) {
-        Header(header, onBack, onHeader, onMenu)
+        Header(header, onBack, onHeader, onMenu, onBrain)
         Box(Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(
                 Modifier.fillMaxSize(),
@@ -139,7 +141,7 @@ fun ChatScreen(
 }
 
 @Composable
-private fun Header(header: ChatHeaderState, onBack: () -> Unit, onHeader: () -> Unit, onMenu: () -> Unit) {
+private fun Header(header: ChatHeaderState, onBack: () -> Unit, onHeader: () -> Unit, onMenu: () -> Unit, onBrain: (() -> Unit)?) {
     val colors = Foxy.colors
     val chat = header.chat
     Column(Modifier.fillMaxWidth().background(colors.surface).windowInsetsPadding(WindowInsets.statusBars)) {
@@ -153,6 +155,7 @@ private fun Header(header: ChatHeaderState, onBack: () -> Unit, onHeader: () -> 
                     Text(header.subtitle, color = colors.textSecondary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
+            if (onBrain != null) IconButton(onBrain) { Icon(Icons.Filled.SmartToy, "Brain", tint = colors.accent) }
             IconButton(onMenu) { Icon(Icons.Filled.MoreVert, "Ещё", tint = colors.text) }
         }
         val caseTitle = chat.label?.caseTitle

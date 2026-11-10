@@ -59,6 +59,8 @@ import app.foxygram.model.MessageItem
 import app.foxygram.model.ReactionItem
 import app.foxygram.model.ReplyInfo
 import app.foxygram.model.SendState
+import app.foxygram.ui.brain.BrainMarkBadge
+import app.foxygram.ui.brain.LocalBrainMarks
 import app.foxygram.ui.common.Avatar
 import app.foxygram.ui.common.TelegramImage
 import app.foxygram.ui.common.clockTime
@@ -149,12 +151,17 @@ fun MessageRow(row: FeedRow.Message, isGroupChat: Boolean, actions: MessageActio
                 }
                 Spacer(Modifier.width(4.dp))
             }
+            // In a chat Brain analyses, its mark sits beside the message, on the side away from the screen edge.
+            val marks = LocalBrainMarks.current
+            val mark = marks[item.id] ?: item.groupIds.firstNotNullOfOrNull { marks[it] }
+            if (mark != null && item.outgoing) BrainMarkBadge(mark, { actions.onTap(item) })
             Column(horizontalAlignment = if (item.outgoing) Alignment.End else Alignment.Start) {
                 if (row.bubbleless()) BareMessage(row, maxBubble, actions) else Bubble(row, maxBubble, actions)
                 if (item.reactions.isNotEmpty() && row.bubbleless()) {
                     Reactions(item, actions, Modifier.padding(top = 4.dp))
                 }
             }
+            if (mark != null && !item.outgoing) BrainMarkBadge(mark, { actions.onTap(item) })
         }
     }
 }
