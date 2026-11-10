@@ -13,6 +13,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from . import __version__
 from .admin_page import PAGE
 from .service import Service, pairing_uri
+from .web import add_web_routes
 
 CSRF_HEADER = "x-foxygram"
 
@@ -142,4 +143,5 @@ def create_admin(service: Service) -> FastAPI:
         service.set_chat_ai(chat_id, body.enabled)
         return {"ok": True}
 
+    add_web_routes(app, service)
     return app

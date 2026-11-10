@@ -10,9 +10,24 @@ from typing import Any, Awaitable, Callable
 from .. import __version__
 from ..config import Config
 from . import messages as msg
+from .store import TdStore, chat_list
 from .tdjson import TdClient, TdError
 
 log = logging.getLogger("telegram")
+
+HISTORY_FILL_TRIES = 3
+MUTE_FOREVER_SECONDS = 2_147_483_647
+DOWNLOAD_TIMEOUT = 600.0
+# Message changes the browser shows. Each one asks it to reload the newest page of that chat.
+MESSAGE_UPDATES = {
+    "updateNewMessage",
+    "updateMessageContent",
+    "updateMessageEdited",
+    "updateMessageInteractionInfo",
+    "updateMessageSendFailed",
+    "updateChatReadOutbox",
+}
+
 
 @dataclass
 class ChatInfo:
@@ -33,7 +48,8 @@ class AuthStatus:
 
 
 class TelegramSession:
-    """Stays offline and never views messages, so your read state and phone alerts are untouched."""
+    """Stays offline and views nothing on its own, so your read state and phone alerts are untouched.
+    Only the browser client marks messages read, when you open a chat in it, like any Telegram app would."""
 
     def __init__(self, config: Config, client_factory: Callable[..., TdClient] = TdClient):
         self.config = config
@@ -47,6 +63,8 @@ class TelegramSession:
         self.on_message_edited: Callable[[int, int, dict[str, Any]], Awaitable[None]] | None = None
         self.on_messages_deleted: Callable[[int, list[int]], Awaitable[None]] | None = None
         self.on_chat_changed: Callable[[ChatInfo], None] | None = None
+        self.on_event: Callable[[dict[str, Any]], None] | None = None
+        self.store = TdStore()
         self.started_at = time.time()
 
     def start(self) -> None:
@@ -85,14 +103,16 @@ class TelegramSession:
             self.auth.error = error.message
 
     async def load_all_chats(self) -> None:
-        for chat_list in ({"@type": "chatListMain"}, {"@type": "chatListArchive"}):
+        await self._load_lists(["main", "archive"] + [f"folder{f['id']}" for f in self.store.folders])
+
+    async def _load_lists(self, keys: list[str]) -> None:
+        for key in keys:
             while True:
                 try:
-                    await self.client.call({"@type": "loadChats", "chat_list": chat_list, "limit": 200})
+                    await self.client.call({"@type": "loadChats", "chat_list": chat_list(key), "limit": 200})
                 except TdError as error:
-                    if error.code == 404:  # every chat has been loaded
-                        break
-                    log.warning("loadChats: %s", error)
+                    if error.code != 404:  # 404 means every chat has been loaded
+                        log.warning("loadChats: %s", error)
                     break
 
     async def history(self, chat_id: int, limit: int) -> list[dict[str, Any]]:
@@ -115,7 +135,139 @@ class TelegramSession:
             from_id = batch[-1]["id"]
         return collected
 
+    # --- Calls the browser client makes ---
+
+    async def history_page(self, chat_id: int, from_message_id: int, offset: int, limit: int) -> list[dict[str, Any]]:
+        """One page of history, newest first. TDLib often answers a first call with only what it has cached."""
+        messages: list[dict[str, Any]] = []
+        for _ in range(HISTORY_FILL_TRIES):
+            page = await self.client.call({
+                "@type": "getChatHistory",
+                "chat_id": chat_id,
+                "from_message_id": from_message_id,
+                "offset": offset,
+                "limit": limit,
+                "only_local": False,
+            })
+            messages = [m for m in page.get("messages") or [] if m]
+            if len(messages) >= limit or offset < 0:
+                break
+        return messages
+
+    async def messages(self, chat_id: int, message_ids: list[int]) -> list[dict[str, Any]]:
+        if not message_ids:
+            return []
+        found = await self.client.call({"@type": "getMessages", "chat_id": chat_id, "message_ids": message_ids})
+        return [m for m in found.get("messages") or [] if m]
+
+    async def open_chat(self, chat_id: int) -> None:
+        await self.client.call({"@type": "openChat", "chat_id": chat_id})
+
+    async def close_chat(self, chat_id: int) -> None:
+        await self.client.call({"@type": "closeChat", "chat_id": chat_id})
+
+    async def view_messages(self, chat_id: int, message_ids: list[int]) -> None:
+        await self.client.call({
+            "@type": "viewMessages",
+            "chat_id": chat_id,
+            "message_ids": message_ids,
+            "source": {"@type": "messageSourceChatHistory"},
+            "force_read": True,
+        })
+
+    async def mark_read(self, chat_id: int) -> None:
+        chat = self.store.chats.get(chat_id) or {}
+        if chat.get("is_marked_as_unread"):
+            await self.client.call({"@type": "toggleChatIsMarkedAsUnread", "chat_id": chat_id, "is_marked_as_unread": False})
+        last = (chat.get("last_message") or {}).get("id")
+        if last:
+            await self.open_chat(chat_id)
+            try:
+                await self.view_messages(chat_id, [last])
+            finally:
+                await self.close_chat(chat_id)
+
+    async def mark_unread(self, chat_id: int) -> None:
+        await self.client.call({"@type": "toggleChatIsMarkedAsUnread", "chat_id": chat_id, "is_marked_as_unread": True})
+
+    async def set_pinned(self, chat_id: int, pinned: bool, key: str = "main") -> None:
+        await self.client.call({"@type": "toggleChatIsPinned", "chat_list": chat_list(key), "chat_id": chat_id,
+                                "is_pinned": pinned})
+
+    async def set_muted(self, chat_id: int, muted: bool) -> None:
+        settings = dict((self.store.chats.get(chat_id) or {}).get("notification_settings") or {})
+        settings["@type"] = "chatNotificationSettings"
+        settings["use_default_mute_for"] = False
+        settings["mute_for"] = MUTE_FOREVER_SECONDS if muted else 0
+        await self.client.call({"@type": "setChatNotificationSettings", "chat_id": chat_id, "notification_settings": settings})
+
+    async def set_archived(self, chat_id: int, archived: bool) -> None:
+        await self.client.call({"@type": "addChatToList", "chat_id": chat_id,
+                                "chat_list": chat_list("archive" if archived else "main")})
+
+    async def read_chat_list(self, key: str) -> None:
+        await self.client.call({"@type": "readChatList", "chat_list": chat_list(key)})
+
+    async def send_text(self, chat_id: int, text: str, reply_to: int = 0) -> dict[str, Any]:
+        query: dict[str, Any] = {
+            "@type": "sendMessage",
+            "chat_id": chat_id,
+            "input_message_content": {
+                "@type": "inputMessageText",
+                "text": {"@type": "formattedText", "text": text, "entities": []},
+                "clear_draft": True,
+            },
+        }
+        if reply_to:
+            query["reply_to"] = {"@type": "inputMessageReplyToMessage", "message_id": reply_to}
+        return await self.client.call(query)
+
+    async def search_chats(self, query: str, limit: int = 30) -> list[int]:
+        local = await self.client.call({"@type": "searchChats", "query": query, "limit": limit})
+        ids = list(local.get("chat_ids") or [])
+        try:
+            remote = await self.client.call({"@type": "searchChatsOnServer", "query": query, "limit": limit})
+            ids += [i for i in remote.get("chat_ids") or [] if i not in ids]
+        except TdError:
+            pass
+        return ids
+
+    async def download(self, file_id: int) -> dict[str, Any]:
+        """Waits until the whole file is on disk and returns TDLib's file object."""
+        return await self.client.call({
+            "@type": "downloadFile",
+            "file_id": file_id,
+            "priority": 16,
+            "offset": 0,
+            "limit": 0,
+            "synchronous": True,
+        }, timeout=DOWNLOAD_TIMEOUT)
+
+    def _emit(self, event: dict[str, Any]) -> None:
+        if self.on_event:
+            self.on_event(event)
+
+    def _emit_for(self, update: dict[str, Any]) -> None:
+        tag = update.get("@type", "")
+        if tag in MESSAGE_UPDATES:
+            chat_id = update.get("chat_id") or (update.get("message") or {}).get("chat_id")
+            if chat_id:
+                self._emit({"t": "messages", "chat_id": chat_id})
+        elif tag == "updateMessageSendSucceeded":
+            message = update.get("message") or {}
+            self._emit({"t": "sent", "chat_id": message.get("chat_id"), "old_id": update.get("old_message_id"),
+                        "new_id": message.get("id")})
+        elif tag == "updateDeleteMessages" and not update.get("from_cache"):
+            self._emit({"t": "deleted", "chat_id": update.get("chat_id"), "ids": update.get("message_ids") or []})
+        elif tag in ("updateConnectionState", "updateAuthorizationState"):
+            self._emit({"t": "state"})
+
     async def _on_update(self, update: dict[str, Any]) -> None:
+        if self.store.apply(update):
+            self._emit({"t": "chats"})
+        self._emit_for(update)
+        if update.get("@type") == "updateChatFolders" and self.ready.is_set():
+            asyncio.create_task(self._load_lists([f"folder{f['id']}" for f in self.store.folders]))
         match update.get("@type"):
             case "updateAuthorizationState":
                 await self._on_auth(update["authorization_state"])
@@ -167,7 +319,8 @@ class TelegramSession:
                     "database_directory": str(self.config.tdlib_dir),
                     "files_directory": str(self.config.tdlib_dir),
                     "database_encryption_key": "",
-                    "use_file_database": False,
+                    # The browser client downloads photos and files; this lets TDLib find and clean them up.
+                    "use_file_database": True,
                     "use_chat_info_database": True,
                     "use_message_database": True,
                     "use_secret_chats": False,

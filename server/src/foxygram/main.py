@@ -33,8 +33,10 @@ async def serve(config: Config) -> None:
     service.start()
     api = uvicorn.Server(uvicorn.Config(
         create_api(service), host="127.0.0.1", port=config.server.api_port, log_config=None, access_log=False))
+    # The browser client keeps a live event stream open, so shutdown must not wait for it to end by itself.
     admin = uvicorn.Server(uvicorn.Config(
-        create_admin(service), host="127.0.0.1", port=config.server.admin_port, log_config=None, access_log=False))
+        create_admin(service), host="127.0.0.1", port=config.server.admin_port, log_config=None, access_log=False,
+        timeout_graceful_shutdown=3))
     for server in (api, admin):
         server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
 

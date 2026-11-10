@@ -11,6 +11,7 @@ from .analysis import IncomingRow, store_message, worker
 from .config import Config
 from .db import Database
 from .engine import ClaudeEngine
+from .events import EventHub
 from .telegram import messages as msg
 from .telegram.session import ChatInfo, TelegramSession
 from .tunnel import Tunnel
@@ -45,6 +46,8 @@ class Service:
         self.session.on_message_edited = self.on_edited
         self.session.on_messages_deleted = self.on_deleted
         self.session.on_chat_changed = self.on_chat_changed
+        self.events = EventHub()
+        self.session.on_event = self.events.publish
 
     def start(self) -> None:
         self.session.start()

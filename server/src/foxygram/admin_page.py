@@ -39,6 +39,7 @@ PAGE = """<!doctype html>
 <main>
   <h1>FoxyGram Server</h1>
   <p class="sub" id="version"></p>
+  <p style="margin:-12px 0 20px"><a href="/app" style="color:var(--accent);font-weight:500;text-decoration:none">Открыть FoxyGram в браузере</a></p>
 
   <section id="tg"><h2>Telegram <span class="pill" id="tgPill"></span></h2><div id="tgBody"></div></section>
 

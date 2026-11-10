@@ -1,4 +1,6 @@
-"""The API the phone calls. Every route needs the token issued at pairing."""
+"""The API the phone calls. Every route needs the token issued at pairing.
+
+The browser client gets the same routes on the local-only control port, guarded there instead."""
 from __future__ import annotations
 
 import hmac
@@ -12,6 +14,17 @@ from .db import now
 from .service import Service
 
 MAX_LIST = 200
+
+FLAGS_SQL = """SELECT ch.chat_id, ch.needs_reply, ch.urgency, ch.ai_enabled, ch.project_id, ch.category_id,
+          p.name AS project_name, p.color AS project_color, c.name AS category_name,
+          (SELECT cs.id FROM cases cs JOIN case_links l ON l.case_id = cs.id JOIN bursts b ON b.id = l.burst_id
+             WHERE b.chat_id = ch.chat_id AND cs.status = 'open' ORDER BY cs.updated_at DESC LIMIT 1) AS case_id,
+          (SELECT cs.title FROM cases cs JOIN case_links l ON l.case_id = cs.id JOIN bursts b ON b.id = l.burst_id
+             WHERE b.chat_id = ch.chat_id AND cs.status = 'open' ORDER BY cs.updated_at DESC LIMIT 1) AS case_title
+   FROM chats ch
+   LEFT JOIN projects p ON p.id = ch.project_id
+   LEFT JOIN categories c ON c.id = ch.category_id
+   WHERE ch.ai_enabled = 1 OR ch.project_id IS NOT NULL OR ch.needs_reply = 1"""
 
 
 class ChatPatch(BaseModel):
@@ -68,7 +81,6 @@ def _record_correction(service: Service, burst_id: int, from_case: int | None, t
 
 def create_api(service: Service) -> FastAPI:
     app = FastAPI(title="FoxyGram", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
-    db = service.db
     expected = service.config.secrets.api_token
 
     async def require_token(authorization: str = Header(default="")) -> None:
@@ -77,7 +89,14 @@ def create_api(service: Service) -> FastAPI:
             raise HTTPException(status_code=401, detail="invalid token")
         service.phone_seen_at = now()
 
-    guarded = {"dependencies": [Depends(require_token)]}
+    add_v1_routes(app, service, [Depends(require_token)])
+    return app
+
+
+def add_v1_routes(app: FastAPI, service: Service, dependencies: list[Any]) -> None:
+    """Every /v1 route, each carrying the given guard dependencies."""
+    db = service.db
+    guarded = {"dependencies": dependencies}
 
     @app.get("/v1/health", **guarded)
     async def health() -> dict[str, Any]:
@@ -117,18 +136,7 @@ def create_api(service: Service) -> FastAPI:
     @app.get("/v1/flags", **guarded)
     async def flags() -> list[dict[str, Any]]:
         """Compact per-chat labels for the chat list."""
-        return db.all(
-            """SELECT ch.chat_id, ch.needs_reply, ch.urgency, ch.ai_enabled, ch.project_id, ch.category_id,
-                      p.name AS project_name, p.color AS project_color, c.name AS category_name,
-                      (SELECT cs.id FROM cases cs JOIN case_links l ON l.case_id = cs.id JOIN bursts b ON b.id = l.burst_id
-                         WHERE b.chat_id = ch.chat_id AND cs.status = 'open' ORDER BY cs.updated_at DESC LIMIT 1) AS case_id,
-                      (SELECT cs.title FROM cases cs JOIN case_links l ON l.case_id = cs.id JOIN bursts b ON b.id = l.burst_id
-                         WHERE b.chat_id = ch.chat_id AND cs.status = 'open' ORDER BY cs.updated_at DESC LIMIT 1) AS case_title
-               FROM chats ch
-               LEFT JOIN projects p ON p.id = ch.project_id
-               LEFT JOIN categories c ON c.id = ch.category_id
-               WHERE ch.ai_enabled = 1 OR ch.project_id IS NOT NULL OR ch.needs_reply = 1"""
-        )
+        return db.all(FLAGS_SQL)
 
     @app.get("/v1/projects", **guarded)
     async def projects() -> list[dict[str, Any]]:
@@ -276,5 +284,3 @@ def create_api(service: Service) -> FastAPI:
                WHERE messages_fts MATCH ? ORDER BY m.date DESC LIMIT ?""",
             (terms, min(limit, MAX_LIST)),
         )
-
-    return app

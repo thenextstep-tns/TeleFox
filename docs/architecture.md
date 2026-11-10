@@ -55,12 +55,30 @@ a Scheduled Task at logon. Settings live in `%LOCALAPPDATA%\FoxyGram\config.toml
 | Port | Bound to | Purpose | Protection |
 |------|----------|---------|------------|
 | 8787 | tunnel | phone API | bearer token |
-| 8788 | 127.0.0.1 | admin page | Host allowlist, CSRF header |
+| 8788 | 127.0.0.1 | admin page, browser client | Host allowlist, CSRF header, same-origin check |
 
 The phone reaches port 8787 through a Cloudflare tunnel the server keeps running: a named
 tunnel for a fixed address, or a free quick tunnel whose address changes on restart. The
 server always gives `cloudflared` its own config, so another tunnel on the same machine
 can't take over its routing.
+
+### Browser client
+
+`http://127.0.0.1:8788/app` copies the phone app's screens for the laptop: chat list with
+folders and archive, chats with replies, photos, files and voice, cases, the review queue and
+the Claude chat list. It is only reachable from this computer, and the tunnel never sees it.
+
+Unlike the phone, it has no Telegram session of its own. It reads and sends through the
+server's session (`web.py`), which keeps a copy of TDLib's chats, users and folders
+(`telegram/store.py`) and maps messages the way `td/TdMapper.kt` does (`web_model.py`).
+Changes reach open tabs over one event stream as "reload this" hints, merged per chat.
+Sent messages come from the "FoxyGram Server" device. The server marks nothing read on its
+own; the browser does, for messages shown in a chat that is open in a focused tab, and a
+setting turns that off. Files are downloaded by TDLib on request and served only from its
+folder. Anything a browser could run, such as SVG, is served as a download.
+
+The cases, labels and review screens call the same `/v1` routes as the phone. On this port
+they are guarded by the control page's checks instead of the token.
 
 ### Pipeline
 
