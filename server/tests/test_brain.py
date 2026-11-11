@@ -23,6 +23,40 @@ ANALYSIS = {
                  "reason": "", "answer": None, "result": None, "createdAt": "2026-11-10 18:31:18", "resolvedAt": None}],
     "summary": "",
 }
+STAGES = [{"id": s, "title": t, "about": a} for s, t, a in [
+    ("posted", "Posted", "The dispatcher posted the load."), ("tracking", "Tracking", "Tracking was mentioned."),
+    ("pickup", "Pickup", "Driving to the shipper."), ("loaded", "Loaded", "Loaded at the shipper: BOL, freight photos, seal and tarp checks."),
+    ("in_transit", "In transit", "On the way."), ("delivery", "Delivery", "ETA, arrived, unloading, empty."),
+    ("pod", "POD", "Waiting for the POD."), ("done", "Done", "The POD came in clean."), ("cancelled", "Cancelled", "Fell through.")]]
+CHECKS = [{"id": i, "title": t} for i, t in [
+    ("rate_con", "Rate confirmation"), ("route", "Route & miles"), ("tracking", "Tracking mentioned"), ("pickup_number", "Pickup number"),
+    ("bol", "BOL"), ("freight_photos", "Freight photos"), ("seal", "Seal number"), ("tarp", "Tarp photos"), ("pod", "POD"),
+    ("datatruck", "Delivered in Datatruck")]]
+# Brain's /brain/api/loads?show=all&chatId=… for "Truck 325": one load under way, one done, and one of another job.
+LOAD = {
+    "id": 4, "job": "job2", "chatId": "-5534970202", "chatTitle": "Truck 325", "ref": "", "title": "Le Roy, NY → Montgomery, AL",
+    "truck": "325", "driver": "Shinara Matthews", "broker": "", "miles": "1119", "stage": "loaded",
+    "stops": [{"type": "pickup", "place": "Le Roy, NY 14482", "when": "11/10 7:30-15:00", "done": True},
+              {"type": "delivery", "place": "Montgomery, AL 36105", "when": "11/12 7:30"}],
+    "numbers": {"Shipper BOL #": "32950027"},
+    "checks": {"rate_con": {"state": "received", "note": "posted by Orest", "at": "2026-11-11T12:34:20.085Z"},
+               "tracking": {"state": "asked", "note": "Trucker Tools", "at": "2026-11-11T12:34:20.085Z"},
+               "bol": {"state": "problem", "note": "page 1 of 2 only", "at": "2026-11-11T12:34:20.085Z"}},
+    "waiting": [{"id": 1, "what": "Trucker Tools screenshot", "from": "driver", "askedBy": "Orest", "at": "2026-11-10T16:00:45.000Z"},
+                {"id": 2, "what": "Old request", "at": "2026-11-10T10:00:00.000Z", "doneAt": "2026-11-10T11:00:00.000Z"}],
+    "createdAt": "2026-11-11T12:34:20.085Z", "updatedAt": "2026-11-11T12:34:20.085Z", "closedAt": None, "open": True,
+    "jobName": "Dispatch Helper",
+    "events": [{"id": 4, "loadId": 4, "runId": 99, "by": "brain", "text": "Caught up from the chat: loaded in Le Roy.",
+                "stage": "loaded", "messageIds": [100, 101], "at": "2026-11-11T12:34:20.085Z"}],
+}
+DONE = {**LOAD, "id": 3, "ref": "77001", "title": "", "stage": "done", "open": False, "closedAt": "2026-11-10T20:00:00.000Z",
+        "checks": {}, "waiting": [], "numbers": {}, "miles": "about 300",
+        "events": [{"id": 3, "loadId": 3, "runId": None, "by": "owner", "text": "Moved to Done.", "stage": "done", "messageIds": [],
+                    "at": "2026-11-10T20:00:00.000Z"}]}
+BOARD = {"stages": STAGES, "checks": CHECKS, "checkStates": {"asked": "asked for", "received": "received", "ok": "checked, fine",
+                                                             "problem": "problem", "not_needed": "not needed"},
+         "jobs": [{"id": "job2", "name": "Dispatch Helper"}], "counts": {"loaded": 1}, "closed": 1, "catchingUp": 0, "chats": 4,
+         "loads": [LOAD, DONE, {**LOAD, "id": 9, "job": "job7"}, {**LOAD, "id": 10, "chatId": "-100777"}]}
 
 
 class FakeBrain(BaseHTTPRequestHandler):
@@ -58,6 +92,8 @@ class FakeBrain(BaseHTTPRequestHandler):
             return self.reply(200, {"jobs": JOBS, "connected": True, "chat": self.chat(chat_id)})
         if self.path.startswith("/brain/api/chat-analysis?"):
             return self.reply(200, {"chatId": "-5534970202", "items": [ANALYSIS], "waiting": [103]})
+        if self.path.startswith("/brain/api/loads?") and not self.state.get("noLoads"):
+            return self.reply(200, BOARD)
         if self.path == "/brain/api/status":
             return self.reply(200, {"jobs": [{"id": "job1", "paused": False}, {"id": "job2", "paused": True}], "running": 0, "open": 1})
         if self.path == "/brain/api/decide":
@@ -223,6 +259,54 @@ async def test_the_panel_shows_only_for_chats_in_a_job(service, brain_url, brain
     assert panel["sending"] is True
     asked = [a["path"] for a in FakeBrain.seen]
     assert any(p.startswith("/brain/api/chat-analysis?chatId=-5534970202") for p in asked)
+
+
+async def test_the_panel_shows_the_chats_loads(service, brain_url, brain_env):
+    use_brain(service, brain_url, env_file=str(brain_env))
+    port = service.config.server.admin_port
+    transport = httpx.ASGITransport(app=create_admin(service))
+    async with httpx.AsyncClient(transport=transport, base_url=f"http://127.0.0.1:{port}") as browser:
+        await browser.post("/v1/brain/chats/-5534970202/jobs", json={"job_id": "job2", "on": True}, headers={"x-foxygram": "1"})
+        panel = (await browser.get("/v1/brain/chats/-5534970202/panel")).json()
+        assert "/brain/api/loads?show=all&chatId=-5534970202" in [a["path"] for a in FakeBrain.seen]
+        load, done = panel["loads"]  # neither another job's load nor another chat's
+        assert load["name"] == "Load #4" and load["stageTitle"] == "Loaded" and (load["step"], load["steps"]) == (4, 8)
+        assert load["route"] == "Le Roy, NY → Montgomery, AL" and load["meta"] == ["Truck 325", "Shinara Matthews", "1119 mi"]
+        assert load["stops"][0] == {"text": "Pickup: Le Roy, NY 14482 · 11/10 7:30-15:00", "done": True}
+        labels = [(c["label"], c["tone"]) for c in load["checks"]]
+        assert labels == [("✓ Rate confirmation — posted by Orest", "ok"), ("Tracking mentioned (asked for) — Trucker Tools", "asked"),
+                          ("! BOL — page 1 of 2 only", "problem"), ("Freight photos: not yet", "missing")]
+        assert [w["what"] for w in load["waiting"]] == ["Trucker Tools screenshot"]  # the done one is left out
+        assert load["waiting"][0]["line"].startswith("from driver · asked by Orest · ") and load["waiting"][0]["line"].endswith("ago")
+        assert load["numbers"] == [{"label": "Shipper BOL #", "value": "32950027"}]
+        event = load["events"][0]
+        assert event["telegramMessageIds"] == [100, 101] and event["messageIds"] == [100 << 20, 101 << 20] and event["stage"] == "Loaded"
+        assert len(event["at"]) == 19 and event["at"][10] == " "  # Brain's local "YYYY-MM-DD HH:MM:SS", like the rest of the panel
+        assert done["name"] == "Load 77001" and done["open"] is False and done["step"] == 8 and done["closedAt"]
+        assert done["meta"][-1] == "Miles: about 300" and done["checks"] == []  # nothing is "not yet" on a closed load
+
+        FakeBrain.state["noLoads"] = True  # a Brain from before loads: the rest of the panel still works
+        older = (await browser.get("/v1/brain/chats/-5534970202/panel")).json()
+        assert older["loads"] is None and older["items"][0]["runId"] == 6
+
+
+def test_a_chat_without_a_job_that_follows_loads_has_no_loads_section():
+    from foxygram.brain_loads import panel_loads
+    assert panel_loads(BOARD, "-5534970202", ["job1"]) is None
+    assert panel_loads(None, "-5534970202", ["job2"]) is None
+    assert panel_loads({**BOARD, "loads": []}, "-5534970202", ["job2"]) == []
+    assert [load["id"] for load in panel_loads(BOARD, "-100777", ["job2"])] == [10]
+
+
+def test_load_times_read_as_ago():
+    from datetime import datetime, timezone
+    from foxygram.brain_loads import ago, local
+    now = datetime(2026, 11, 11, 12, 0, tzinfo=timezone.utc)
+    assert ago("2026-11-11T11:59:30Z", now) == "just now"
+    assert ago("2026-11-11T11:20:00Z", now) == "40 min ago"
+    assert ago("2026-11-11T07:00:00Z", now) == "5 h ago"
+    assert ago("2026-11-08T12:00:00Z", now) == "3 days ago"
+    assert ago("", now) == "" and local("not a time") == ""
 
 
 async def test_sending_can_be_switched_off_for_a_chat(service, brain_url, brain_env):

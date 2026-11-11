@@ -78,6 +78,11 @@ class Brain:
         query = urllib.parse.urlencode({"chatId": str(chat_id), "limit": str(limit)})
         return await self._call("GET", f"/brain/api/chat-analysis?{query}")
 
+    async def loads(self, chat_id: int) -> dict[str, Any]:
+        """The loads Brain follows in this chat (open and closed), with their stages, documents and history."""
+        query = urllib.parse.urlencode({"show": "all", "chatId": str(chat_id)})
+        return await self._call("GET", f"/brain/api/loads?{query}")
+
     async def status(self) -> dict[str, Any]:
         return await self._call("GET", "/brain/api/status")
 

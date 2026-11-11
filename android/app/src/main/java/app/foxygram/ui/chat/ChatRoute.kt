@@ -362,6 +362,10 @@ fun ChatRoute(telegram: Telegram, chatId: Long, onBack: () -> Unit, navigate: (R
                     }
                 },
                 modifier = Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(WindowInsets.navigationBars),
+                onJumpToMessage = { id ->
+                    brainOpen = false
+                    actions.onJumpTo(id)
+                },
             )
         }
     }

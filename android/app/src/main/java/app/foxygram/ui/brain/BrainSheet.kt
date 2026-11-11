@@ -41,6 +41,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.foxygram.data.BrainAction
+import app.foxygram.data.BrainLoad
 import app.foxygram.data.BrainMark
 import app.foxygram.data.BrainPanel
 import app.foxygram.data.BrainRun
@@ -113,6 +114,7 @@ fun BrainPanelContent(
     onJump: (BrainRun) -> Unit,
     onDecide: (BrainAction, String, String?, String?) -> Unit,
     modifier: Modifier = Modifier,
+    onJumpToMessage: (Long) -> Unit = {},
 ) {
     val colors = Foxy.colors
     Column(modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
@@ -151,8 +153,20 @@ fun BrainPanelContent(
                 }
             }
             runs.forEach { RunCard(it, null, onDecide) }
+            // The loads Brain recorded from this message.
+            val loads = panel.loadsFor(selectedIds)
+            if (loads.isNotEmpty()) {
+                Label(if (loads.size > 1) "Loads" else "Load")
+                loads.forEach { LoadCard(it, onJumpToMessage) }
+            }
             TextButton(onShowAll, Modifier.padding(start = 0.dp)) { Text("All analyses in this chat", color = colors.accent) }
         } else {
+            panel.loads?.let { loads ->
+                val open = loads.count { it.open }
+                Label(if (open > 0) "Loads in this chat · $open open" else "Loads in this chat")
+                if (loads.isEmpty()) Hint("Brain hasn't recorded a load in this chat yet.")
+                loads.forEach { LoadCard(it, onJumpToMessage) }
+            }
             Hint("Tap a message to see what Brain decided and what it proposes.")
             if (panel.items.isEmpty()) {
                 Hint("Brain hasn't analysed anything in this chat yet.")
@@ -230,6 +244,117 @@ private fun RunCard(run: BrainRun, onJump: ((BrainRun) -> Unit)?, onDecide: (Bra
             Text(run.summary, color = colors.textSecondary, fontSize = 13.sp, maxLines = 5, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
         }
     }
+}
+
+/**
+ * A load Brain follows in this chat: stage and progress, documents, what someone is waiting for, and its history.
+ * The server words it all; Brain's Loads tab on the laptop has the full view and the owner's changes.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun LoadCard(load: BrainLoad, onJumpToMessage: (Long) -> Unit) {
+    val colors = Foxy.colors
+    var showStops by remember(load.id) { mutableStateOf(false) }
+    var showHistory by remember(load.id) { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().padding(bottom = 10.dp).clip(RoundedCornerShape(12.dp)).background(colors.background).padding(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(load.name, color = colors.text, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false))
+                LabelPill(load.stageTitle, when (load.stage) { "done" -> colors.success; "cancelled" -> colors.textSecondary; else -> colors.accent })
+            }
+            Text(if (load.open) "updated ${load.updatedAgo}" else "closed ${brainTime(load.closedAt.orEmpty())}",
+                color = colors.textSecondary, fontSize = 12.sp, maxLines = 1)
+        }
+        if (load.route.isNotBlank()) Text(load.route, color = colors.text, fontSize = 14.sp, modifier = Modifier.padding(top = 6.dp))
+        if (load.meta.isNotEmpty()) Small(load.meta.joinToString(" · "))
+        if (load.open && load.step > 0) {
+            Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                for (i in 1..load.steps) {
+                    val color = when {
+                        i < load.step -> colors.accent
+                        i == load.step -> colors.accent.copy(alpha = 0.45f)
+                        else -> colors.surfaceHigh
+                    }
+                    Box(Modifier.weight(1f).height(4.dp).clip(RoundedCornerShape(2.dp)).background(color))
+                }
+            }
+            Small("Stage ${load.step} of ${load.steps} · ${load.stageAbout}")
+        }
+        if (load.checks.isNotEmpty()) {
+            FlowRow(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                load.checks.forEach { check ->
+                    val tint = when (check.tone) {
+                        "ok" -> colors.success
+                        "asked" -> colors.warning
+                        "problem" -> colors.danger
+                        else -> colors.textSecondary
+                    }
+                    val shape = RoundedCornerShape(10.dp)
+                    val chip = if (check.tone == "missing") Modifier.border(1.dp, colors.border, shape) else Modifier.clip(shape).background(tint.copy(alpha = 0.14f))
+                    Text(check.label, color = tint, fontSize = 12.sp, modifier = chip.padding(horizontal = 8.dp, vertical = 3.dp))
+                }
+            }
+        }
+        if (load.waiting.isNotEmpty()) {
+            SectionLabel("Waiting for")
+            load.waiting.forEach { wait ->
+                Row(Modifier.fillMaxWidth().padding(top = 6.dp).height(IntrinsicSize.Min)) {
+                    Box(Modifier.width(3.dp).fillMaxHeight().background(if (wait.old) colors.danger else colors.warning))
+                    Column(Modifier.padding(start = 8.dp)) {
+                        Text(wait.what, color = colors.text, fontSize = 14.sp)
+                        if (wait.line.isNotBlank()) Text(wait.line, color = colors.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp))
+                    }
+                }
+            }
+        }
+        load.events.lastOrNull()?.let {
+            Text("${brainTime(it.at)} · ${it.text}", color = colors.textSecondary, fontSize = 13.sp, maxLines = 5, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 8.dp))
+        }
+        if (load.stops.isNotEmpty() || load.numbers.isNotEmpty()) {
+            Fold(if (load.numbers.isNotEmpty()) "Stops and numbers" else "Stops", showStops) { showStops = !showStops }
+            if (showStops) {
+                load.stops.forEach { Text((if (it.done) "✓ " else "") + it.text, color = colors.text, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)) }
+                if (load.numbers.isNotEmpty()) Small(load.numbers.joinToString(" · ") { (label, value) -> "$label: $value" })
+            }
+        }
+        if (load.events.isNotEmpty()) {
+            Fold("History (${load.events.size})", showHistory) { showHistory = !showHistory }
+            if (showHistory) {
+                load.events.asReversed().forEach { event ->
+                    Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                        Box(Modifier.fillMaxWidth().height(1.dp).background(colors.border))
+                        val who = when {
+                            event.by == "owner" -> "you"
+                            event.runId != null -> "run #${event.runId}"
+                            else -> "Brain"
+                        }
+                        Small(listOfNotNull(brainTime(event.at).ifBlank { null }, who, event.stage).joinToString(" · "))
+                        Text(event.text, color = colors.text, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp))
+                        event.messageIds.firstOrNull()?.let { first ->
+                            val count = event.messageIds.size
+                            Text(
+                                if (count > 1) "Go to messages ($count)" else "Go to message", color = colors.accent, fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp).clickable { onJumpToMessage(first) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Small(text: String) {
+    Text(text, color = Foxy.colors.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+}
+
+@Composable
+private fun Fold(title: String, open: Boolean, onToggle: () -> Unit) {
+    Text((if (open) "▾ " else "▸ ") + title, color = Foxy.colors.accent, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+        modifier = Modifier.padding(top = 8.dp).clickable(onClick = onToggle).padding(vertical = 4.dp))
 }
 
 @Composable

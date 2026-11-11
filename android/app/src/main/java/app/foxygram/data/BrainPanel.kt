@@ -42,10 +42,48 @@ data class BrainRun(
     val summary: String,
 )
 
+/** A document or check on a load, already worded by the server. [tone]: ok, asked, problem, plain or missing. */
+data class BrainLoadCheck(val label: String, val tone: String, val detail: String)
+
+/** Something a person asked for on a load and is still waiting on. [old] after about four hours. */
+data class BrainLoadWait(val what: String, val line: String, val at: String, val old: Boolean)
+
+/** One line of a load's history. [messageIds] are TDLib's. */
+data class BrainLoadEvent(val text: String, val by: String, val at: String, val stage: String?, val runId: Long?, val messageIds: List<Long>)
+
+data class BrainLoadStop(val text: String, val done: Boolean)
+
+/**
+ * A load Brain follows in this chat, shaped by the server: stage and progress ([step] of [steps], 0 when cancelled),
+ * route, documents, what someone is waiting for, numbers and the latest history (oldest first).
+ */
+data class BrainLoad(
+    val id: Long,
+    val name: String,
+    val stage: String,
+    val stageTitle: String,
+    val stageAbout: String,
+    val step: Int,
+    val steps: Int,
+    val open: Boolean,
+    val route: String,
+    val meta: List<String>,
+    val stops: List<BrainLoadStop>,
+    val checks: List<BrainLoadCheck>,
+    val waiting: List<BrainLoadWait>,
+    val numbers: List<Pair<String, String>>,
+    val events: List<BrainLoadEvent>,
+    val updatedAgo: String,
+    val closedAt: String?,
+) {
+    fun mentions(messageIds: Collection<Long>): Boolean = events.any { event -> event.messageIds.any { it in messageIds } }
+}
+
 /**
  * Brain's side panel for a chat. Only chats in at least one of Brain's jobs are active.
  * [waiting] holds messages Brain has received but not started on yet (it waits about 20 s for more), as TDLib ids.
  * [sending] is false when the owner switched sending off: Brain only shows what it would have answered.
+ * [loads] is null when no job of this chat follows loads.
  */
 data class BrainPanel(
     val active: Boolean,
@@ -53,7 +91,11 @@ data class BrainPanel(
     val items: List<BrainRun>,
     val waiting: List<Long> = emptyList(),
     val sending: Boolean = true,
+    val loads: List<BrainLoad>? = null,
 ) {
+    /** The loads Brain recorded from these messages. */
+    fun loadsFor(messageIds: Collection<Long>): List<BrainLoad> = loads.orEmpty().filter { it.mentions(messageIds) }
+
     val pausedJobs: List<BrainPanelJob> get() = jobs.filter { it.paused }
 
     /** Brain is busy: a run is going, or it holds messages it hasn't started on. */
@@ -99,8 +141,44 @@ fun parseBrainPanel(body: String): BrainPanel {
         items = (0 until items.length()).map { index -> parseRun(items.getJSONObject(index)) },
         waiting = json.optJSONArray("waiting")?.let { ids -> (0 until ids.length()).map { ids.getLong(it) } } ?: emptyList(),
         sending = json.optBoolean("sending", true),
+        loads = json.optJSONArray("loads")?.let { loads -> (0 until loads.length()).map { parseLoad(loads.getJSONObject(it)) } },
     )
 }
+
+private fun JSONArray?.objects(): List<JSONObject> = if (this == null) emptyList() else (0 until length()).map { getJSONObject(it) }
+
+private fun JSONArray?.longs(): List<Long> = if (this == null) emptyList() else (0 until length()).map { getLong(it) }
+
+private fun parseLoad(load: JSONObject): BrainLoad = BrainLoad(
+    id = load.optLong("id"),
+    name = load.text("name") ?: "Load #${load.optLong("id")}",
+    stage = load.optString("stage"),
+    stageTitle = load.text("stageTitle") ?: load.optString("stage"),
+    stageAbout = load.text("stageAbout").orEmpty(),
+    step = load.optInt("step"),
+    steps = load.optInt("steps", 8),
+    open = load.optBoolean("open", true),
+    route = load.text("route").orEmpty(),
+    meta = load.optJSONArray("meta").strings().filter { it.isNotBlank() },
+    stops = load.optJSONArray("stops").objects().map { BrainLoadStop(it.optString("text"), it.optBoolean("done")) },
+    checks = load.optJSONArray("checks").objects().map { BrainLoadCheck(it.optString("label"), it.optString("tone"), it.optString("detail")) },
+    waiting = load.optJSONArray("waiting").objects().map {
+        BrainLoadWait(it.optString("what"), it.optString("line"), it.optString("at"), it.optBoolean("old"))
+    },
+    numbers = load.optJSONArray("numbers").objects().map { it.optString("label") to it.optString("value") },
+    events = load.optJSONArray("events").objects().map {
+        BrainLoadEvent(
+            text = it.optString("text"),
+            by = it.optString("by", "brain"),
+            at = it.optString("at"),
+            stage = it.text("stage"),
+            runId = if (it.has("runId") && !it.isNull("runId")) it.optLong("runId") else null,
+            messageIds = it.optJSONArray("messageIds").longs(),
+        )
+    },
+    updatedAgo = load.text("updatedAgo").orEmpty(),
+    closedAt = load.text("closedAt"),
+)
 
 private fun parseRun(run: JSONObject): BrainRun {
     val ids = run.optJSONArray("messageIds") ?: JSONArray()

@@ -103,6 +103,14 @@ server turns them into TDLib's (`id << 20`) before the browser matches them. The
 every few seconds while a run is working and every 15 seconds otherwise. Chats in no job
 show nothing.
 
+When one of the chat's jobs follows loads (Brain's Dispatch Helper), the panel also lists
+the chat's loads: open ones and the last three closed. The server asks Brain's
+`/brain/api/loads?show=all&chatId=…` and shapes each load into a card in `brain_loads.py`
+(stage and progress, route, documents with "not yet" for ones due, what someone is waiting
+for, stops, numbers, the last ten history lines), so the browser and the phone only draw it.
+A message Brain recorded a load from shows that load under its analysis. Changing a load
+stays on Brain's own Loads tab. A Brain without loads still gets the rest of the panel.
+
 ### Pipeline
 
 Only chats the owner selects are stored. Everything else is dropped on arrival.

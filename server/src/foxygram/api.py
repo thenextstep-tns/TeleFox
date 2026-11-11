@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from . import __version__
 from .brain import BrainError, to_tdlib
+from .brain_loads import panel_loads
 from .db import now
 from .service import Service
 
@@ -73,7 +74,8 @@ class BrainDecision(BaseModel):
     reason: str | None = None
 
 
-def brain_panel(chat: dict[str, Any], status: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
+def brain_panel(chat: dict[str, Any], status: dict[str, Any], analysis: dict[str, Any],
+                loads: dict[str, Any] | None = None) -> dict[str, Any]:
     """What the side panel next to a chat shows. Message ids are turned into TDLib's, which the clients use."""
     names = {job["id"]: job["name"] for job in chat.get("jobs") or []}
     paused = {job["id"] for job in status.get("jobs") or [] if job.get("paused")}
@@ -89,6 +91,8 @@ def brain_panel(chat: dict[str, Any], status: dict[str, Any], analysis: dict[str
         "waiting": [to_tdlib(int(m)) for m in analysis.get("waiting") or []],
         # False when the owner switched sending off: Brain only shows what it would have answered.
         "sending": chat["chat"].get("sending", True) is not False,
+        # The loads Brain follows in this chat; None when none of its jobs here follows loads.
+        "loads": panel_loads(loads, chat["chat"].get("chatId"), chat["chat"]["jobs"]),
     }
 
 
@@ -328,6 +332,13 @@ def add_v1_routes(app: FastAPI, service: Service, dependencies: list[Any]) -> No
         except BrainError as error:
             raise HTTPException(status_code=error.status, detail=error.message) from error
 
+    async def optional(call):
+        """Loads came later than the rest of the panel: an older Brain without them still gets its panel."""
+        try:
+            return await call
+        except BrainError:
+            return None
+
     @app.get("/v1/brain/chats/{chat_id}", **guarded)
     async def brain_chat(chat_id: int) -> dict[str, Any]:
         return await brain(service.brain.chat(chat_id))
@@ -351,9 +362,9 @@ def add_v1_routes(app: FastAPI, service: Service, dependencies: list[Any]) -> No
         chat = await brain(service.brain.chat(chat_id))
         if not (chat.get("chat") or {}).get("jobs"):
             return {"active": False, "jobs": [], "items": []}
-        status, analysis = await brain(asyncio.gather(
-            service.brain.status(), service.brain.analysis(chat_id, max(1, min(limit, 500)))))
-        return brain_panel(chat, status, analysis)
+        status, analysis, loads = await brain(asyncio.gather(
+            service.brain.status(), service.brain.analysis(chat_id, max(1, min(limit, 500))), optional(service.brain.loads(chat_id))))
+        return brain_panel(chat, status, analysis, loads)
 
     @app.post("/v1/brain/actions/{action_id}/decide", **guarded)
     async def brain_decide(action_id: int, body: BrainDecision) -> dict[str, Any]:

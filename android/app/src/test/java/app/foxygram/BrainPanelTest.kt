@@ -48,6 +48,26 @@ private val PANEL = """
  ]}
 """.trimIndent()
 
+/** The same panel with the loads the server shaped from Brain's (Truck 325: one under way, one done). */
+private val WITH_LOADS = PANEL.replace("\"active\": true,", """"active": true, "loads": [
+  {"id": 4, "name": "Load #4", "ref": "", "job": "job2", "jobName": "Dispatch Helper", "stage": "loaded", "stageTitle": "Loaded",
+   "stageAbout": "Loaded at the shipper: BOL, freight photos, seal and tarp checks.", "step": 4, "steps": 8, "open": true,
+   "route": "Le Roy, NY → Montgomery, AL", "meta": ["Truck 325", "Shinara Matthews", "1119 mi"],
+   "stops": [{"text": "Pickup: Le Roy, NY 14482 · 11/10 7:30-15:00", "done": true}, {"text": "Delivery: Montgomery, AL 36105 · 11/12 7:30", "done": false}],
+   "checks": [{"label": "✓ Rate confirmation — posted by Orest", "tone": "ok", "detail": "received, 2026-11-11 14:34:20"},
+              {"label": "Tracking mentioned (asked for) — Trucker Tools", "tone": "asked", "detail": "asked for"},
+              {"label": "! BOL — page 1 of 2 only", "tone": "problem", "detail": "problem"},
+              {"label": "Freight photos: not yet", "tone": "missing", "detail": "Nothing recorded yet"}],
+   "waiting": [{"what": "Trucker Tools screenshot", "line": "from driver · asked by Orest · 20 h ago", "at": "2026-11-10 18:00:45", "old": true}],
+   "numbers": [{"label": "Shipper BOL #", "value": "32950027"}],
+   "events": [{"text": "Caught up from the chat: loaded in Le Roy.", "by": "brain", "at": "2026-11-11 14:34:20", "stage": "Loaded", "runId": 99,
+               "telegramMessageIds": [101], "messageIds": [${101L shl 20}]}],
+   "updatedAt": "2026-11-11 14:34:20", "updatedAgo": "2 h ago", "closedAt": null},
+  {"id": 3, "name": "Load 77001", "stage": "done", "stageTitle": "Done", "stageAbout": "", "step": 8, "steps": 8, "open": false,
+   "route": "New Haven, CT → Ovid, NY", "meta": ["Truck 325"], "stops": [], "checks": [], "waiting": [], "numbers": [],
+   "events": [{"text": "Moved to Done.", "by": "owner", "at": "2026-11-10 22:00:00", "stage": "Done", "runId": null, "messageIds": []}],
+   "updatedAgo": "1 day ago", "closedAt": "2026-11-10 22:00:00"}],""")
+
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [34], qualifiers = "w390dp-h1400dp-xxhdpi")
@@ -89,6 +109,22 @@ class BrainPanelTest {
         assertEquals(BrainMark.Done, off.marks()[101L shl 20])
     }
 
+    @Test fun readsTheChatsLoads() {
+        assertEquals(null, parseBrainPanel(PANEL).loads)  // no job of this chat follows loads, or an older server
+        val panel = parseBrainPanel(WITH_LOADS)
+        val (load, done) = panel.loads!!
+        assertEquals("Load #4", load.name)
+        assertEquals(4 to 8, load.step to load.steps)
+        assertEquals(listOf("ok", "asked", "problem", "missing"), load.checks.map { it.tone })
+        assertTrue(load.waiting.single().old)
+        assertEquals(listOf("Shipper BOL #" to "32950027"), load.numbers)
+        assertEquals(99L, load.events.single().runId)
+        assertEquals(null, done.events.single().runId)
+        assertTrue(!done.open && done.closedAt != null)
+        assertEquals(listOf(load), panel.loadsFor(listOf(101L shl 20)))  // the load Brain recorded from this message
+        assertTrue(panel.loadsFor(listOf(13L shl 20)).isEmpty())
+    }
+
     @Test fun brainTimesAreLocal() {
         assertEquals("", brainTime("not a time"))
         assertTrue(brainTime("2026-11-10 18:31:18").endsWith("18:31"))
@@ -116,6 +152,8 @@ class BrainPanelTest {
 
     @Test fun sheetForAMessageDark() = shot(ThemeMode.Dark, "brain_message_dark", listOf(101L shl 20))
     @Test fun sheetForTheChatLight() = shot(ThemeMode.Light, "brain_chat_light", null)
+    @Test fun sheetWithLoadsDark() = shot(ThemeMode.Dark, "brain_loads_dark", null, WITH_LOADS)
+    @Test fun sheetForAMessageWithItsLoadLight() = shot(ThemeMode.Light, "brain_message_load_light", listOf(101L shl 20), WITH_LOADS)
     @Test fun sheetWithSendingOff() = shot(ThemeMode.Light, "brain_sending_off", listOf(101L shl 20),
         PANEL.replace("\"active\": true,", "\"active\": true, \"sending\": false,")
             .replace("\"status\": \"open\", \"statusText\": \"Waiting for you\",\n     \"to\": \"Test Group\"",

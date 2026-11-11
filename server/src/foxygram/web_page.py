@@ -267,6 +267,31 @@ a { color:inherit; }
 .m.bsel .bub { box-shadow:0 0 0 2px var(--accent); }
 .m.bsel .bare { outline:2px solid var(--accent); outline-offset:2px; border-radius:12px; }
 .brain-hint { color:var(--text2); font-size:13px; }
+.bload { background:var(--surface); border-radius:12px; padding:12px; margin-bottom:10px; }
+.bload-top { display:flex; align-items:center; flex-wrap:wrap; gap:6px; font-size:15px; }
+.bload-top b { font-weight:500; }
+.bload-when { color:var(--text2); font-size:12px; margin-left:auto; }
+.bload-route { font-size:14px; margin-top:6px; overflow-wrap:anywhere; }
+.bload-meta { color:var(--text2); font-size:13px; margin-top:4px; overflow-wrap:anywhere; }
+.bload-steps { display:flex; gap:3px; margin-top:10px; }
+.bload-steps span { flex:1; height:4px; border-radius:2px; background:var(--surface-high); }
+.bload-steps span.done { background:var(--accent); }
+.bload-steps span.now { background:color-mix(in srgb, var(--accent) 45%, transparent); }
+.bload-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+.bchip { font-size:12px; border-radius:10px; padding:3px 8px; overflow-wrap:anywhere; }
+.bchip.ok { color:var(--success); background:color-mix(in srgb, var(--success) 14%, transparent); }
+.bchip.asked { color:var(--warning); background:color-mix(in srgb, var(--warning) 14%, transparent); }
+.bchip.problem { color:var(--danger); background:color-mix(in srgb, var(--danger) 14%, transparent); }
+.bchip.plain { color:var(--text2); background:var(--surface-high); }
+.bchip.missing { color:var(--text2); border:1px dashed var(--border); }
+.bload-wait { border-left:3px solid var(--warning); padding:2px 0 2px 8px; margin-top:6px; font-size:14px; overflow-wrap:anywhere; }
+.bload-wait.old { border-left-color:var(--danger); }
+.bload details { margin-top:8px; font-size:13px; }
+.bload summary { cursor:pointer; color:var(--accent); font-weight:500; padding:2px 0; }
+.bload-list { margin:4px 0 0; padding:0; list-style:none; }
+.bload-list li { padding:3px 0; overflow-wrap:anywhere; }
+.bload-ev { padding:6px 0; border-top:1px solid var(--border); overflow-wrap:anywhere; }
+.bload-ev .t { color:var(--text2); font-size:12px; }
 .sw { width:52px; height:32px; border-radius:16px; border:2px solid var(--text2); background:var(--surface-high); position:relative; flex:none; cursor:pointer; padding:0; }
 .sw::after { content:""; position:absolute; width:16px; height:16px; border-radius:50%; background:var(--text2); left:6px; top:6px; transition:all .15s; }
 .sw.on { background:var(--accent); border-color:var(--accent); }
@@ -1821,9 +1846,18 @@ function renderBrainPanel(view) {
       }
     }
     for (const item of items) kids.push(brainRun(view, item, false));
+    // The loads Brain recorded from this message.
+    const loads = (brain.loads || []).filter(load => load.events.some(e => e.messageIds.some(id => selected.includes(id))));
+    if (loads.length) kids.push(h("div", { class: "bp-sub", text: loads.length > 1 ? "Loads" : "Load" }), ...loads.map(load => loadCard(view, load)));
     kids.push(h("button", { class: "tbtn", style: "margin-left:-12px", text: "All analyses in this chat",
       onclick: () => { view.brainSelected = null; renderBrainPanel(view); applyBrainMarks(view); } }));
   } else {
+    if (brain.loads) {
+      const open = brain.loads.filter(load => load.open).length;
+      kids.push(h("div", { class: "bp-sub", text: open ? `Loads in this chat · ${open} open` : "Loads in this chat" }));
+      if (!brain.loads.length) kids.push(h("div", { class: "bp-hint", text: "Brain hasn't recorded a load in this chat yet." }));
+      kids.push(...brain.loads.map(load => loadCard(view, load)));
+    }
     kids.push(h("div", { class: "bp-hint", text: "Click a message to see what Brain decided and what it proposes." }));
     if (!brain.items.length) kids.push(h("div", { class: "bp-hint", text: "Brain hasn't analysed anything in this chat yet." }));
     else kids.push(h("div", { class: "bp-sub", text: "Latest analyses" }), ...brain.items.slice(0, 30).map(item => brainRun(view, item, true)));
@@ -1855,6 +1889,57 @@ function brainRun(view, item, withJump) {
   }
   if (item.summary && !item.working) run.append(h("div", { class: "brun-sum", title: item.summary, text: item.summary }));
   return run;
+}
+// A load Brain follows in this chat: its stage, documents, what someone is waiting for, and its history.
+// The server shapes it; Brain's own Loads tab (localhost:7777/loads) has the full view and the owner's changes.
+function loadCard(view, load) {
+  const tone = load.stage === "done" ? "var(--success)" : load.stage === "cancelled" ? "var(--text2)" : "var(--accent)";
+  const card = h("div", { class: "bload" },
+    h("div", { class: "bload-top" }, h("b", { text: load.name }), labelPill(load.stageTitle, tone),
+      h("span", { class: "bload-when", text: load.open ? `updated ${load.updatedAgo}` : `closed ${brainTime(load.closedAt)}` })));
+  if (load.route) card.append(h("div", { class: "bload-route", text: load.route }));
+  if (load.meta.length) card.append(h("div", { class: "bload-meta", text: load.meta.join(" · ") }));
+  if (load.open && load.step) {
+    const bar = h("div", { class: "bload-steps", title: `${load.stageTitle}: ${load.stageAbout}` });
+    for (let i = 1; i <= load.steps; i++) bar.append(h("span", { class: i < load.step ? "done" : i === load.step ? "now" : "" }));
+    card.append(bar, h("div", { class: "bload-meta", text: `Stage ${load.step} of ${load.steps} · ${load.stageAbout}` }));
+  }
+  if (load.checks.length) {
+    card.append(h("div", { class: "bload-chips" }, ...load.checks.map(c => h("span", { class: `bchip ${c.tone}`, title: c.detail, text: c.label }))));
+  }
+  if (load.waiting.length) {
+    card.append(h("div", { class: "brun-label", text: "Waiting for" }), ...load.waiting.map(w =>
+      h("div", { class: "bload-wait" + (w.old ? " old" : ""), title: brainTime(w.at) },
+        h("div", { text: w.what }), h("div", { class: "bload-meta", style: "margin-top:2px", text: w.line }))));
+  }
+  const last = load.events[load.events.length - 1];
+  if (last) card.append(h("div", { class: "brun-sum", title: last.text, text: `${brainTime(last.at)} · ${last.text}` }));
+  // Folded parts stay open across the panel's refreshes.
+  view.loadFolds = view.loadFolds || new Set();
+  const fold = (key, title, kids) => {
+    const id = `${load.id}:${key}`;
+    const box = h("details", {}, h("summary", { text: title }), ...kids);
+    box.open = view.loadFolds.has(id);
+    box.addEventListener("toggle", () => { if (box.open) view.loadFolds.add(id); else view.loadFolds.delete(id); });
+    return box;
+  };
+  const details = [];
+  if (load.stops.length) details.push(h("ul", { class: "bload-list" }, ...load.stops.map(s => h("li", { text: (s.done ? "✓ " : "") + s.text }))));
+  if (load.numbers.length) details.push(h("div", { class: "bload-meta", text: load.numbers.map(n => `${n.label}: ${n.value}`).join(" · ") }));
+  if (details.length) card.append(fold("stops", load.numbers.length ? "Stops and numbers" : "Stops", details));
+  if (load.events.length) {
+    card.append(fold("history", `History (${load.events.length})`, [...load.events].reverse().map(e => {
+      const who = e.by === "owner" ? "you" : e.runId ? `run #${e.runId}` : "Brain";
+      const row = h("div", { class: "bload-ev" },
+        h("div", { class: "t", text: [brainTime(e.at), who, e.stage].filter(Boolean).join(" · ") }), h("div", { text: e.text }));
+      if (e.messageIds.length) {
+        row.append(h("button", { class: "tbtn", style: "margin:0 0 0 -12px;padding:2px 12px",
+          text: e.messageIds.length > 1 ? `Go to messages (${e.messageIds.length})` : "Go to message", onclick: () => jumpTo(e.messageIds[0]) }));
+      }
+      return row;
+    })));
+  }
+  return card;
 }
 function brainAction(view, action) {
   const card = h("div", { class: "bact" });
