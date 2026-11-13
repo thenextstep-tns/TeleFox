@@ -97,6 +97,8 @@ data class BrainPanel(
     val sending: Boolean = true,
     val loads: List<BrainLoad>? = null,
     val pinned: List<BrainPinned> = emptyList(),
+    /** Replies Brain would have sent in the last day where sending is off: to read and copy, never sent. */
+    val drafts: List<BrainPinned> = emptyList(),
 ) {
     /** The loads Brain recorded from these messages. */
     fun loadsFor(messageIds: Collection<Long>): List<BrainLoad> = loads.orEmpty().filter { it.mentions(messageIds) }
@@ -147,14 +149,15 @@ fun parseBrainPanel(body: String): BrainPanel {
         waiting = json.optJSONArray("waiting")?.let { ids -> (0 until ids.length()).map { ids.getLong(it) } } ?: emptyList(),
         sending = json.optBoolean("sending", true),
         loads = json.optJSONArray("loads")?.let { loads -> (0 until loads.length()).map { parseLoad(loads.getJSONObject(it)) } },
-        pinned = json.optJSONArray("pinned").objects().map {
-            BrainPinned(
-                action = parseAction(it), runId = it.optLong("runId"), job = it.optString("job"), jobName = it.text("jobName") ?: "Brain",
-                at = it.optString("at"), why = it.text("why").orEmpty(), messageIds = it.optJSONArray("messageIds").longs(),
-            )
-        },
+        pinned = json.optJSONArray("pinned").objects().map(::parsePinned),
+        drafts = json.optJSONArray("drafts").objects().map(::parsePinned),
     )
 }
+
+private fun parsePinned(it: JSONObject) = BrainPinned(
+    action = parseAction(it), runId = it.optLong("runId"), job = it.optString("job"), jobName = it.text("jobName") ?: "Brain",
+    at = it.optString("at"), why = it.text("why").orEmpty(), messageIds = it.optJSONArray("messageIds").longs(),
+)
 
 private fun parseAction(action: JSONObject) = BrainAction(
     id = action.getLong("id"),

@@ -38,8 +38,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.widget.Toast
 import app.foxygram.data.BrainAction
 import app.foxygram.data.BrainLoad
 import app.foxygram.data.BrainMark
@@ -170,6 +174,11 @@ fun BrainPanelContent(
                     modifier = Modifier.padding(top = 4.dp, bottom = 8.dp))
                 panel.pinned.forEach { pin -> PinnedCard(pin, onDecide, onJumpToMessage) { t -> feedbackFor = t } }
             }
+            if (panel.drafts.isNotEmpty()) {
+                Label("Brain would have replied · ${panel.drafts.size}")
+                Hint("Sending is off for this chat, so these were never sent. Copy one to send it yourself. They stay here for a day.")
+                panel.drafts.forEach { draft -> PinnedCard(draft, onDecide, onJumpToMessage, draft = true) { t -> feedbackFor = t } }
+            }
             panel.loads?.let { loads ->
                 val open = loads.count { it.open }
                 Label(if (open > 0) "Loads in this chat · $open open" else "Loads in this chat")
@@ -240,17 +249,30 @@ private fun FeedbackDialog(target: FeedbackTarget, onDismiss: () -> Unit, onSend
 
 /** Something waiting for you, pinned above everything else: why, the message or question with its buttons. */
 @Composable
-private fun PinnedCard(pin: BrainPinned, onDecide: (BrainAction, String, String?, String?) -> Unit, onJumpToMessage: (Long) -> Unit, onFeedback: (FeedbackTarget) -> Unit) {
+private fun PinnedCard(
+    pin: BrainPinned, onDecide: (BrainAction, String, String?, String?) -> Unit, onJumpToMessage: (Long) -> Unit,
+    draft: Boolean = false, onFeedback: (FeedbackTarget) -> Unit,
+) {
     val colors = Foxy.colors
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val edge = if (draft) colors.border else colors.warning.copy(alpha = 0.45f)
     Column(Modifier.fillMaxWidth().padding(bottom = 10.dp).clip(RoundedCornerShape(12.dp)).background(colors.background)
-        .border(1.dp, colors.warning.copy(alpha = 0.45f), RoundedCornerShape(12.dp)).padding(12.dp)) {
+        .border(1.dp, edge, RoundedCornerShape(12.dp)).padding(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            LabelPill(pin.jobName, colors.warning)
+            LabelPill(pin.jobName, if (draft) colors.textSecondary else colors.warning)
             Text(brainTime(pin.at), color = colors.textSecondary, fontSize = 13.sp, maxLines = 1)
         }
         if (pin.why.isNotBlank()) Text(pin.why, color = colors.text, fontSize = 15.sp, modifier = Modifier.padding(top = 6.dp))
         ActionCard(pin.action, onDecide)
         Row {
+            val text = pin.action.text
+            if (draft && text != null) {
+                TextButton({
+                    clipboard.setText(AnnotatedString(text))
+                    Toast.makeText(context, "Скопировано", Toast.LENGTH_SHORT).show()
+                }) { Text("Copy", color = colors.accent) }
+            }
             pin.messageIds.firstOrNull()?.let { first ->
                 TextButton({ onJumpToMessage(first) }) { Text(if (pin.messageIds.size > 1) "Go to messages (${pin.messageIds.size})" else "Go to message", color = colors.accent) }
             }

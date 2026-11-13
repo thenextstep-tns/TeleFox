@@ -270,6 +270,8 @@ a { color:inherit; }
 .bp-pinned { color:var(--warning); }
 .bpin { background:var(--surface); border:1px solid color-mix(in srgb, var(--warning) 45%, transparent); border-radius:12px; padding:12px; margin-bottom:10px; }
 .bfb { background:var(--surface); border-radius:12px; padding:12px; margin-bottom:10px; }
+.bpin.bdraft { border-color:var(--border); }
+.ib-badge.muted { background:var(--text2); color:var(--bg); }
 .ib-count { position:relative; }
 .ib-badge { position:absolute; top:4px; right:2px; min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:var(--warning);
   color:#000; font-size:11px; font-weight:600; line-height:16px; text-align:center; }
@@ -1729,7 +1731,7 @@ async function loadBrainPanel(view) {
   }
   if (data) view.brain = data;
   else if (!view.brain) view.brain = { active: true, jobs: [], items: [] };
-  const pins = (view.brain.pinned || []).length;
+  const pins = (view.brain.pinned || []).length * 1000 + (view.brain.drafts || []).length;
   const pinsChanged = view.pinCount !== pins;
   view.pinCount = pins;
   const created = ensureBrainPanel(view);
@@ -1866,6 +1868,12 @@ function renderBrainPanel(view) {
     if (pinned.length) {
       kids.push(h("div", { class: "bp-sub bp-pinned", text: `Waiting for you · ${pinned.length}` }), ...pinned.map(a => pinnedCard(view, a)));
     }
+    const drafts = brain.drafts || [];
+    if (drafts.length) {
+      kids.push(h("div", { class: "bp-sub", text: `Brain would have replied · ${drafts.length}` }),
+        h("div", { class: "bp-hint", text: "Sending is off for this chat, so these were never sent. Copy one to send it yourself. They stay here for a day." }),
+        ...drafts.map(a => pinnedCard(view, a, true)));
+    }
     if (brain.loads) {
       const open = brain.loads.filter(load => load.open).length;
       kids.push(h("div", { class: "bp-sub", text: open ? `Loads in this chat · ${open} open` : "Loads in this chat" }));
@@ -1963,20 +1971,26 @@ function loadCard(view, load) {
 function brainButton(view) {
   const b = iconButton("robot", "Brain", () => toggleBrainPanel(view), view.panel && !view.panel.classList.contains("closed") ? "on" : "dim");
   const n = ((view.brain && view.brain.pinned) || []).length;
-  if (n) {
+  const d = ((view.brain && view.brain.drafts) || []).length;
+  if (n || d) {
     b.classList.add("ib-count");
-    b.title = `Brain · ${n} waiting for you`;
-    b.append(h("span", { class: "ib-badge", text: String(n) }));
+    b.title = n ? `Brain · ${n} waiting for you` : `Brain · ${d} replies it would have sent`;
+    b.append(h("span", { class: "ib-badge" + (n ? "" : " muted"), text: String(n || d) }));
   }
   return b;
 }
 // What waits for you in this chat (a message to approve, a question), newest first, pinned above everything else.
-function pinnedCard(view, a) {
-  const card = h("div", { class: "bpin" },
-    h("div", { class: "brun-top" }, labelPill(a.jobName || "Brain", "var(--warning)"), h("span", { text: brainTime(a.at) })));
+function pinnedCard(view, a, draft) {
+  const card = h("div", { class: draft ? "bpin bdraft" : "bpin" },
+    h("div", { class: "brun-top" }, labelPill(a.jobName || "Brain", draft ? "var(--text2)" : "var(--warning)"), h("span", { text: brainTime(a.at) })));
   if (a.why) card.append(h("div", { class: "brun-text", text: a.why }));
   card.append(brainAction(view, a));
   const row = h("div", { class: "bact-buttons" });
+  if (draft && a.text) {
+    row.append(h("button", { class: "tbtn", text: "Copy", onclick: async () => {
+      try { await navigator.clipboard.writeText(a.text); toast("Copied"); } catch (e) { toast("Couldn't copy: " + e.message); }
+    } }));
+  }
   if (a.messageIds && a.messageIds.length) {
     row.append(h("button", { class: "tbtn", text: a.messageIds.length > 1 ? `Go to messages (${a.messageIds.length})` : "Go to message",
       onclick: () => { selectBrainMessage(view, a.messageIds); jumpTo(a.messageIds[0]); } }));

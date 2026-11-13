@@ -77,6 +77,14 @@ private val WITH_PINNED = PANEL.replace("\"active\": true,", """"active": true, 
    "why": "Truck 325 Shinara Matthews hasn't sent the weekly trip report for Nov 9–15, due this morning. I suggest reminding the driver.",
    "messageIds": []}],""")
 
+/** A chat with sending off: the reply Brain would have sent today, pinned to read and copy. */
+private val WITH_DRAFT = PANEL.replace("\"active\": true,", """"active": true, "sending": false, "drafts": [
+  {"id": 90, "runId": 160, "kind": "approval", "actionType": "telegram.send", "status": "not_sent", "statusText": "Not sent",
+   "to": "Truck 1442 Cavon Campbell", "text": "Thanks, looks good. Please send the signed BOL too.",
+   "question": null, "options": [], "reason": "The driver sent freight photos; the BOL is still missing.", "answer": null, "result": null,
+   "job": "job2", "jobName": "Dispatch Helper", "at": "2026-11-12 22:19:31",
+   "why": "The driver sent the freight photos. I'll thank him and ask for the signed BOL.", "messageIds": [${101L shl 20}]}],""")
+
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [34], qualifiers = "w390dp-h1400dp-xxhdpi")
@@ -145,6 +153,15 @@ class BrainPanelTest {
         assertEquals("job2", parseBrainPanel(PANEL).items.first().job)
     }
 
+    @Test fun readsWhatBrainWouldHaveSent() {
+        assertTrue(parseBrainPanel(PANEL).drafts.isEmpty())
+        val panel = parseBrainPanel(WITH_DRAFT)
+        val draft = panel.drafts.single()
+        assertTrue(draft.action.isUnsent && !draft.action.isOpen && !panel.sending)
+        assertEquals("Thanks, looks good. Please send the signed BOL too.", draft.action.text)
+        assertTrue(panel.pinned.isEmpty())
+    }
+
     @Test fun brainTimesAreLocal() {
         assertEquals("", brainTime("not a time"))
         assertTrue(brainTime("2026-11-10 18:31:18").endsWith("18:31"))
@@ -174,6 +191,7 @@ class BrainPanelTest {
     @Test fun sheetForTheChatLight() = shot(ThemeMode.Light, "brain_chat_light", null)
     @Test fun sheetWithLoadsDark() = shot(ThemeMode.Dark, "brain_loads_dark", null, WITH_LOADS)
     @Test fun sheetWithPinnedLight() = shot(ThemeMode.Light, "brain_pinned_light", null, WITH_PINNED)
+    @Test fun sheetWithDraftDark() = shot(ThemeMode.Dark, "brain_draft_dark", null, WITH_DRAFT)
     @Test fun sheetForAMessageWithItsLoadLight() = shot(ThemeMode.Light, "brain_message_load_light", listOf(101L shl 20), WITH_LOADS)
     @Test fun sheetWithSendingOff() = shot(ThemeMode.Light, "brain_sending_off", listOf(101L shl 20),
         PANEL.replace("\"active\": true,", "\"active\": true, \"sending\": false,")

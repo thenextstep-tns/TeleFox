@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+from datetime import datetime, timedelta
 from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
@@ -17,6 +18,8 @@ from .db import now
 from .service import Service
 
 MAX_LIST = 200
+# How long a reply Brain would have sent (sending off for the chat) stays pinned in the panel.
+DRAFTS_PINNED_FOR = timedelta(hours=24)
 
 FLAGS_SQL = """SELECT ch.chat_id, ch.needs_reply, ch.urgency, ch.ai_enabled, ch.project_id, ch.category_id,
           p.name AS project_name, p.color AS project_color, c.name AS category_name,
@@ -91,19 +94,26 @@ def brain_panel(chat: dict[str, Any], status: dict[str, Any], analysis: dict[str
         telegram_ids = [int(m) for m in item.get("messageIds") or []]
         items.append({**item, "telegramMessageIds": telegram_ids, "messageIds": [to_tdlib(m) for m in telegram_ids]})
     # What waits for the owner (a message to approve, a question to answer), newest first, pinned above everything else.
-    pinned = []
+    # Below it, the replies Brain would have sent in the last day where sending is off: to read and copy, never sent.
+    pinned, drafts = [], []
+    since = (datetime.now() - DRAFTS_PINNED_FOR).strftime("%Y-%m-%d %H:%M:%S")
     for item in items:
         for action in item.get("actions") or []:
+            at = str(action.get("createdAt") or item.get("at") or "")
+            entry = {**action, "job": item.get("job"), "jobName": item.get("jobName"), "at": at,
+                     "why": (item.get("decisions") or [{}])[-1].get("text") or "", "messageIds": item["messageIds"]}
             if action.get("status") == "open":
-                why = (item.get("decisions") or [{}])[-1].get("text") or ""
-                pinned.append({**action, "job": item.get("job"), "jobName": item.get("jobName"), "at": action.get("createdAt") or item.get("at"),
-                               "why": why, "messageIds": item["messageIds"]})
-    pinned.sort(key=lambda a: (str(a.get("at") or ""), int(a.get("id") or 0)), reverse=True)
+                pinned.append(entry)
+            elif action.get("status") == "not_sent" and action.get("kind") == "approval" and at >= since:
+                drafts.append(entry)
+    for group in (pinned, drafts):
+        group.sort(key=lambda a: (str(a.get("at") or ""), int(a.get("id") or 0)), reverse=True)
     return {
         "active": True,
         "jobs": [{"id": job, "name": names.get(job, job), "paused": job in paused} for job in chat["chat"]["jobs"]],
         "items": items,
         "pinned": pinned,
+        "drafts": drafts,
         # Messages Brain has received but not yet started on (it waits about 20 s for more), as TDLib ids.
         "waiting": [to_tdlib(int(m)) for m in analysis.get("waiting") or []],
         # False when the owner switched sending off: Brain only shows what it would have answered.

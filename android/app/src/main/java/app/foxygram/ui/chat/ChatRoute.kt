@@ -228,6 +228,7 @@ fun ChatRoute(telegram: Telegram, chatId: Long, onBack: () -> Unit, navigate: (R
             null
         },
         brainWaiting = brain?.pinned?.size ?: 0,
+        brainDrafts = brain?.drafts?.size ?: 0,
         composer = {
             Box(Modifier.fillMaxWidth()) {
                 Composer(

@@ -77,12 +77,14 @@ fun ChatScreen(
     onBrain: (() -> Unit)? = null,
     /** How many things wait for the owner in this chat (Brain's suggestions and questions). */
     brainWaiting: Int = 0,
+    /** How many replies Brain would have sent in the last day where sending is off. */
+    brainDrafts: Int = 0,
 ) {
     val colors = Foxy.colors
     val isGroup = header.chat.kind == ChatKind.Group
     val scope = rememberCoroutineScope()
     Column(modifier.fillMaxSize().background(colors.background).windowInsetsPadding(WindowInsets.navigationBars).imePadding()) {
-        Header(header, onBack, onHeader, onMenu, onBrain, brainWaiting)
+        Header(header, onBack, onHeader, onMenu, onBrain, brainWaiting, brainDrafts)
         Box(Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(
                 Modifier.fillMaxSize(),
@@ -143,7 +145,7 @@ fun ChatScreen(
 }
 
 @Composable
-private fun Header(header: ChatHeaderState, onBack: () -> Unit, onHeader: () -> Unit, onMenu: () -> Unit, onBrain: (() -> Unit)?, brainWaiting: Int = 0) {
+private fun Header(header: ChatHeaderState, onBack: () -> Unit, onHeader: () -> Unit, onMenu: () -> Unit, onBrain: (() -> Unit)?, brainWaiting: Int = 0, brainDrafts: Int = 0) {
     val colors = Foxy.colors
     val chat = header.chat
     Column(Modifier.fillMaxWidth().background(colors.surface).windowInsetsPadding(WindowInsets.statusBars)) {
@@ -161,20 +163,29 @@ private fun Header(header: ChatHeaderState, onBack: () -> Unit, onHeader: () -> 
                 Box {
                     IconButton(onBrain) { Icon(Icons.Filled.SmartToy, "Brain", tint = colors.accent) }
                     if (brainWaiting > 0) CountBadge(brainWaiting, colors.warning, Modifier.align(Alignment.TopEnd).padding(top = 4.dp, end = 2.dp), 11.sp)
+                    else if (brainDrafts > 0) CountBadge(brainDrafts, colors.textSecondary, Modifier.align(Alignment.TopEnd).padding(top = 4.dp, end = 2.dp), 11.sp)
                 }
             }
             IconButton(onMenu) { Icon(Icons.Filled.MoreVert, "Ещё", tint = colors.text) }
         }
-        // Brain's suggestions and questions for this chat, pinned where they can't be missed.
-        if (onBrain != null && brainWaiting > 0) {
+        // Brain's suggestions and questions for this chat, pinned where they can't be missed; else what it would have sent.
+        if (onBrain != null && (brainWaiting > 0 || brainDrafts > 0)) {
+            val tint = if (brainWaiting > 0) colors.warning else colors.textSecondary
             Row(
-                Modifier.fillMaxWidth().background(colors.warning.copy(alpha = 0.12f)).clickable(onClick = onBrain).padding(horizontal = 16.dp, vertical = 8.dp),
+                Modifier.fillMaxWidth().background(tint.copy(alpha = 0.12f)).clickable(onClick = onBrain).padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(Icons.Filled.SmartToy, null, tint = colors.warning, modifier = Modifier.size(16.dp))
+                Icon(Icons.Filled.SmartToy, null, tint = tint, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(8.dp))
-                Text(if (brainWaiting == 1) "Brain suggests something · tap to review" else "Brain suggests $brainWaiting things · tap to review",
-                    color = colors.warning, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    when {
+                        brainWaiting == 1 -> "Brain suggests something · tap to review"
+                        brainWaiting > 1 -> "Brain suggests $brainWaiting things · tap to review"
+                        brainDrafts == 1 -> "Brain would have replied · tap to see"
+                        else -> "Brain would have replied $brainDrafts times · tap to see"
+                    },
+                    color = tint, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
             }
         }
         val caseTitle = chat.label?.caseTitle

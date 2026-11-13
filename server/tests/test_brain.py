@@ -91,6 +91,14 @@ class FakeBrain(BaseHTTPRequestHandler):
             chat_id = self.path.split("chatId=")[1]
             return self.reply(200, {"jobs": JOBS, "connected": True, "chat": self.chat(chat_id)})
         if self.path.startswith("/brain/api/chat-analysis?"):
+            if "-5534970202" in self.state.get("noSend", set()):
+                # Sending is off: the reply is kept as a draft. One from today, one from two days ago.
+                from datetime import datetime, timedelta
+                fresh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                old = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")
+                draft = {**ANALYSIS["actions"][0], "status": "not_sent", "createdAt": fresh}
+                stale = {**ANALYSIS["actions"][0], "id": 2, "status": "not_sent", "createdAt": old, "text": "Old draft"}
+                return self.reply(200, {"chatId": "-5534970202", "items": [{**ANALYSIS, "actions": [draft, stale]}], "waiting": []})
             return self.reply(200, {"chatId": "-5534970202", "items": [ANALYSIS], "waiting": [103]})
         if self.path.startswith("/brain/api/loads?") and not self.state.get("noLoads"):
             return self.reply(200, BOARD)
@@ -344,6 +352,9 @@ async def test_sending_can_be_switched_off_for_a_chat(service, brain_url, brain_
         assert FakeBrain.seen[-1]["body"] == {"chatId": "-5534970202", "on": False}
         panel = (await browser.get("/v1/brain/chats/-5534970202/panel")).json()
         assert panel["sending"] is False and panel["jobs"][0]["id"] == "job2"  # still read, just never sent
+        # What Brain would have sent today is pinned to read and copy; older drafts and nothing else.
+        assert panel["pinned"] == [] and [d["text"] for d in panel["drafts"]] == ["Got it"]
+        assert panel["drafts"][0]["why"] == "This needs a reply." and panel["drafts"][0]["status"] == "not_sent"
         back = (await browser.post("/v1/brain/chats/-5534970202/sending", json={"on": True}, headers=csrf)).json()
         assert back["chat"]["sending"] is True
         assert (await browser.post("/v1/brain/chats/-5534970202/sending", json={}, headers=csrf)).status_code == 422
