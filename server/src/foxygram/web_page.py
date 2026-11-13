@@ -2416,6 +2416,15 @@ history.replaceState({ stack: S.stack }, "");
 renderMain();
 refreshAll();
 connectEvents();
+// A link from Brain (its Accounting tab) opens one chat: /app#chat=<id>.
+function openFromHash() {
+  const m = /^#chat=(-?\d+)$/.exec(location.hash);
+  if (!m) return;
+  history.replaceState(history.state, "", location.pathname + location.search);
+  openChat(Number(m[1]));
+}
+window.addEventListener("hashchange", openFromHash);
+openFromHash();
 </script>
 </body>
 </html>
