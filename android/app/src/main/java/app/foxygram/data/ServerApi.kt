@@ -211,6 +211,15 @@ class ServerApi(private val settings: Settings) {
         return JSONObject(request("POST", "/v1/brain/actions/$actionId/decide", body)).optString("text")
     }
 
+    /** Feedback on something Brain did: the job's agent writes it into the job's rules. Returns Brain's answer. */
+    suspend fun brainFeedback(text: String, job: String?, runId: Long?, about: String?): String {
+        val body = JSONObject().put("text", text)
+        if (job != null) body.put("job", job)
+        if (runId != null) body.put("run_id", runId)
+        if (about != null) body.put("about", about)
+        return JSONObject(request("POST", "/v1/brain/feedback", body)).optString("text")
+    }
+
     private fun parseBrainChange(text: String): BrainChange {
         val json = JSONObject(text)
         return BrainChange(json.optString("text"), parseBrainChat(json.getJSONObject("chat")))

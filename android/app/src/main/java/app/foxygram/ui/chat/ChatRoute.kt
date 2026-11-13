@@ -227,6 +227,7 @@ fun ChatRoute(telegram: Telegram, chatId: Long, onBack: () -> Unit, navigate: (R
         } else {
             null
         },
+        brainWaiting = brain?.pinned?.size ?: 0,
         composer = {
             Box(Modifier.fillMaxWidth()) {
                 Composer(
@@ -365,6 +366,13 @@ fun ChatRoute(telegram: Telegram, chatId: Long, onBack: () -> Unit, navigate: (R
                 onJumpToMessage = { id ->
                     brainOpen = false
                     actions.onJumpTo(id)
+                },
+                onFeedback = { target, text ->
+                    scope.launch {
+                        runCatching { api.brainFeedback(text, target.job, target.runId, target.about) }
+                            .onSuccess { Toast.makeText(context, it.ifBlank { "Готово" }, Toast.LENGTH_SHORT).show() }
+                            .onFailure { Toast.makeText(context, "Не удалось: ${it.message}", Toast.LENGTH_LONG).show() }
+                    }
                 },
             )
         }

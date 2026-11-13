@@ -44,6 +44,7 @@ import app.foxygram.data.BrainAction
 import app.foxygram.data.BrainLoad
 import app.foxygram.data.BrainMark
 import app.foxygram.data.BrainPanel
+import app.foxygram.data.BrainPinned
 import app.foxygram.data.BrainRun
 import app.foxygram.ui.common.LabelPill
 import app.foxygram.ui.theme.Foxy
@@ -115,8 +116,11 @@ fun BrainPanelContent(
     onDecide: (BrainAction, String, String?, String?) -> Unit,
     modifier: Modifier = Modifier,
     onJumpToMessage: (Long) -> Unit = {},
+    onFeedback: (FeedbackTarget, String) -> Unit = { _, _ -> },
 ) {
     val colors = Foxy.colors
+    var feedbackFor by remember { mutableStateOf<FeedbackTarget?>(null) }
+    feedbackFor?.let { target -> FeedbackDialog(target, onDismiss = { feedbackFor = null }) { text -> feedbackFor = null; onFeedback(target, text) } }
     Column(modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         val jobs = panel?.jobs?.joinToString(", ") { it.name }.orEmpty()
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -152,7 +156,7 @@ fun BrainPanelContent(
                     Hint("Brain didn't analyse this message." + if (panel.pausedJobs.isNotEmpty()) " While the job is paused, new messages aren't analysed." else "")
                 }
             }
-            runs.forEach { RunCard(it, null, onDecide) }
+            runs.forEach { RunCard(it, null, onDecide) { t -> feedbackFor = t } }
             // The loads Brain recorded from this message.
             val loads = panel.loadsFor(selectedIds)
             if (loads.isNotEmpty()) {
@@ -161,6 +165,11 @@ fun BrainPanelContent(
             }
             TextButton(onShowAll, Modifier.padding(start = 0.dp)) { Text("All analyses in this chat", color = colors.accent) }
         } else {
+            if (panel.pinned.isNotEmpty()) {
+                Text("Waiting for you · ${panel.pinned.size}", color = colors.warning, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 8.dp))
+                panel.pinned.forEach { pin -> PinnedCard(pin, onDecide, onJumpToMessage) { t -> feedbackFor = t } }
+            }
             panel.loads?.let { loads ->
                 val open = loads.count { it.open }
                 Label(if (open > 0) "Loads in this chat · $open open" else "Loads in this chat")
@@ -172,7 +181,7 @@ fun BrainPanelContent(
                 Hint("Brain hasn't analysed anything in this chat yet.")
             } else {
                 Label("Latest analyses")
-                panel.items.take(20).forEach { RunCard(it, onJump, onDecide) }
+                panel.items.take(20).forEach { RunCard(it, onJump, onDecide) { t -> feedbackFor = t } }
             }
         }
         Spacer(Modifier.height(16.dp))
@@ -205,8 +214,55 @@ private fun SectionLabel(text: String) {
         letterSpacing = 0.4.sp, modifier = Modifier.padding(top = 10.dp))
 }
 
+/** What feedback is about: the job, the run and a short description the agent reads. */
+data class FeedbackTarget(val job: String?, val runId: Long?, val about: String)
+
+/** Feedback on something Brain did; the job's agent writes it into its rules. */
 @Composable
-private fun RunCard(run: BrainRun, onJump: ((BrainRun) -> Unit)?, onDecide: (BrainAction, String, String?, String?) -> Unit) {
+private fun FeedbackDialog(target: FeedbackTarget, onDismiss: () -> Unit, onSend: (String) -> Unit) {
+    val colors = Foxy.colors
+    var text by remember(target) { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Feedback") },
+        text = {
+            Column {
+                Text("About: ${target.about}", color = colors.textSecondary, fontSize = 13.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth().padding(top = 8.dp), minLines = 3,
+                    placeholder = { Text("What should Brain do differently? It becomes part of the job's rules.") })
+            }
+        },
+        confirmButton = { TextButton({ if (text.isNotBlank()) onSend(text.trim()) }) { Text("Send feedback", color = colors.accent) } },
+        dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
+        containerColor = colors.surface,
+    )
+}
+
+/** Something waiting for you, pinned above everything else: why, the message or question with its buttons. */
+@Composable
+private fun PinnedCard(pin: BrainPinned, onDecide: (BrainAction, String, String?, String?) -> Unit, onJumpToMessage: (Long) -> Unit, onFeedback: (FeedbackTarget) -> Unit) {
+    val colors = Foxy.colors
+    Column(Modifier.fillMaxWidth().padding(bottom = 10.dp).clip(RoundedCornerShape(12.dp)).background(colors.background)
+        .border(1.dp, colors.warning.copy(alpha = 0.45f), RoundedCornerShape(12.dp)).padding(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            LabelPill(pin.jobName, colors.warning)
+            Text(brainTime(pin.at), color = colors.textSecondary, fontSize = 13.sp, maxLines = 1)
+        }
+        if (pin.why.isNotBlank()) Text(pin.why, color = colors.text, fontSize = 15.sp, modifier = Modifier.padding(top = 6.dp))
+        ActionCard(pin.action, onDecide)
+        Row {
+            pin.messageIds.firstOrNull()?.let { first ->
+                TextButton({ onJumpToMessage(first) }) { Text(if (pin.messageIds.size > 1) "Go to messages (${pin.messageIds.size})" else "Go to message", color = colors.accent) }
+            }
+            TextButton({ onFeedback(FeedbackTarget(pin.job, pin.runId, "The ${if (pin.action.isQuestion) "question" else "suggested message"}: \"${(pin.action.text ?: pin.action.question).orEmpty().take(200)}\"")) }) {
+                Text("Feedback", color = colors.textSecondary)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RunCard(run: BrainRun, onJump: ((BrainRun) -> Unit)?, onDecide: (BrainAction, String, String?, String?) -> Unit, onFeedback: (FeedbackTarget) -> Unit = {}) {
     val colors = Foxy.colors
     Column(Modifier.fillMaxWidth().padding(bottom = 10.dp).clip(RoundedCornerShape(12.dp)).background(colors.background).padding(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -242,6 +298,11 @@ private fun RunCard(run: BrainRun, onJump: ((BrainRun) -> Unit)?, onDecide: (Bra
         }
         if (run.summary.isNotBlank() && !run.working) {
             Text(run.summary, color = colors.textSecondary, fontSize = 13.sp, maxLines = 5, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
+        }
+        if (!run.working) {
+            val what = run.decisions.lastOrNull() ?: run.summary
+            Text("Feedback", color = colors.textSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(top = 8.dp).clickable { onFeedback(FeedbackTarget(run.job.ifBlank { null }, run.runId, "Run #${run.runId}: ${what.take(240)}")) })
         }
     }
 }

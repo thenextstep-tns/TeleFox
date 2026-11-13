@@ -96,6 +96,8 @@ class FakeBrain(BaseHTTPRequestHandler):
             return self.reply(200, BOARD)
         if self.path == "/brain/api/status":
             return self.reply(200, {"jobs": [{"id": "job1", "paused": False}, {"id": "job2", "paused": True}], "running": 0, "open": 1})
+        if self.path == "/brain/api/feedback":
+            return self.reply(200, {"runId": 77, "text": "Dispatch Helper will fold this into its rules (run #77)."})
         if self.path == "/brain/api/decide":
             if body.get("decision") == "answer" and not body.get("text"):
                 return self.reply(400, {"error": "Write an answer first."})
@@ -257,6 +259,10 @@ async def test_the_panel_shows_only_for_chats_in_a_job(service, brain_url, brain
     assert item["actions"][0]["text"] == "Got it" and item["decisions"][0]["text"] == "This needs a reply."
     assert panel["waiting"] == [103 << 20]  # received by Brain, not started yet
     assert panel["sending"] is True
+    # What waits for the owner is pinned on top, with why and where it came from.
+    (pin,) = panel["pinned"]
+    assert pin["id"] == 3 and pin["text"] == "Got it" and pin["why"] == "This needs a reply." and pin["jobName"] == "Job 2 - Datatruck"
+    assert pin["messageIds"] == [101 << 20, 102 << 20]
     asked = [a["path"] for a in FakeBrain.seen]
     assert any(p.startswith("/brain/api/chat-analysis?chatId=-5534970202") for p in asked)
 
@@ -288,6 +294,22 @@ async def test_the_panel_shows_the_chats_loads(service, brain_url, brain_env):
         FakeBrain.state["noLoads"] = True  # a Brain from before loads: the rest of the panel still works
         older = (await browser.get("/v1/brain/chats/-5534970202/panel")).json()
         assert older["loads"] is None and older["items"][0]["runId"] == 6
+
+
+async def test_feedback_reaches_brain(service, brain_url, brain_env):
+    use_brain(service, brain_url, env_file=str(brain_env))
+    port = service.config.server.admin_port
+    transport = httpx.ASGITransport(app=create_admin(service))
+    async with httpx.AsyncClient(transport=transport, base_url=f"http://127.0.0.1:{port}") as browser:
+        csrf = {"x-foxygram": "1"}
+        assert (await browser.post("/v1/brain/feedback", json={"text": "x"})).status_code == 403
+        done = await browser.post("/v1/brain/feedback", json={"text": " A BOL photo is a document. ", "job": "job2", "run_id": 6,
+                                                               "about": "Saved file 3035114_BOL.jpg"}, headers=csrf)
+        assert done.json()["runId"] == 77
+        assert FakeBrain.seen[-1]["body"] == {"text": "A BOL photo is a document.", "job": "job2", "runId": 6, "about": "Saved file 3035114_BOL.jpg"}
+        empty = await browser.post("/v1/brain/feedback", json={"text": "  "}, headers=csrf)
+        assert empty.status_code == 400
+    assert all(asked["token"] == TOKEN for asked in FakeBrain.seen)
 
 
 def test_a_chat_without_a_job_that_follows_loads_has_no_loads_section():

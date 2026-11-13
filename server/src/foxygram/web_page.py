@@ -267,6 +267,12 @@ a { color:inherit; }
 .m.bsel .bub { box-shadow:0 0 0 2px var(--accent); }
 .m.bsel .bare { outline:2px solid var(--accent); outline-offset:2px; border-radius:12px; }
 .brain-hint { color:var(--text2); font-size:13px; }
+.bp-pinned { color:var(--warning); }
+.bpin { background:var(--surface); border:1px solid color-mix(in srgb, var(--warning) 45%, transparent); border-radius:12px; padding:12px; margin-bottom:10px; }
+.bfb { background:var(--surface); border-radius:12px; padding:12px; margin-bottom:10px; }
+.ib-count { position:relative; }
+.ib-badge { position:absolute; top:4px; right:2px; min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:var(--warning);
+  color:#000; font-size:11px; font-weight:600; line-height:16px; text-align:center; }
 .bload { background:var(--surface); border-radius:12px; padding:12px; margin-bottom:10px; }
 .bload-top { display:flex; align-items:center; flex-wrap:wrap; gap:6px; font-size:15px; }
 .bload-top b { font-weight:500; }
@@ -1103,7 +1109,7 @@ function renderHeader() {
       h("div", { style: "min-width:0" },
         h("div", { class: "chead-title", text: title }),
         subText ? h("div", { class: "chead-sub", text: subText }) : null)),
-    view.brain ? iconButton("robot", "Brain", () => toggleBrainPanel(view), view.panel && !view.panel.classList.contains("closed") ? "on" : "dim") : null,
+    view.brain ? brainButton(view) : null,
     iconButton("more", "Ещё", () => chatSheet(chat, "main"))));
   const label = chat.label;
   if (label && label.case_title) {
@@ -1723,12 +1729,15 @@ async function loadBrainPanel(view) {
   }
   if (data) view.brain = data;
   else if (!view.brain) view.brain = { active: true, jobs: [], items: [] };
+  const pins = (view.brain.pinned || []).length;
+  const pinsChanged = view.pinCount !== pins;
+  view.pinCount = pins;
   const created = ensureBrainPanel(view);
   // Leave the panel alone while you type an answer in it; the next look picks up the changes.
   const typing = view.panel.contains(document.activeElement) && /INPUT|TEXTAREA/.test(document.activeElement.tagName);
   if (!typing) renderBrainPanel(view);
   applyBrainMarks(view);
-  if (created) renderHeader();
+  if (created || pinsChanged) renderHeader();
   // Look again soon while Brain is working, while it holds messages it hasn't started on, or while the message you
   // clicked is new and hasn't been analysed yet.
   const sel = view.brainSelected || [];
@@ -1824,6 +1833,7 @@ function renderBrainPanel(view) {
   if (brain.sending === false) {
     kids.push(h("div", { class: "bp-banner", text: "Sending is off for this chat: Brain only shows what it would have answered and sends nothing." }));
   }
+  if (view.feedback) kids.push(feedbackForm(view));
   const selected = view.brainSelected;
   if (selected && selected.length) {
     const message = selected.map(id => view.msgs.get(id)).find(Boolean);
@@ -1852,6 +1862,10 @@ function renderBrainPanel(view) {
     kids.push(h("button", { class: "tbtn", style: "margin-left:-12px", text: "All analyses in this chat",
       onclick: () => { view.brainSelected = null; renderBrainPanel(view); applyBrainMarks(view); } }));
   } else {
+    const pinned = brain.pinned || [];
+    if (pinned.length) {
+      kids.push(h("div", { class: "bp-sub bp-pinned", text: `Waiting for you · ${pinned.length}` }), ...pinned.map(a => pinnedCard(view, a)));
+    }
     if (brain.loads) {
       const open = brain.loads.filter(load => load.open).length;
       kids.push(h("div", { class: "bp-sub", text: open ? `Loads in this chat · ${open} open` : "Loads in this chat" }));
@@ -1888,6 +1902,10 @@ function brainRun(view, item, withJump) {
     run.append(h("div", { class: "brun-sum", text: "Proposes nothing." }));
   }
   if (item.summary && !item.working) run.append(h("div", { class: "brun-sum", title: item.summary, text: item.summary }));
+  if (!item.working) {
+    const what = item.decisions.length ? item.decisions[item.decisions.length - 1].text : item.summary;
+    run.append(h("div", { class: "bact-buttons" }, feedbackButton(view, { job: item.job, runId: item.runId, about: `Run #${item.runId}${what ? `: ${String(what).slice(0, 240)}` : ""}` })));
+  }
   return run;
 }
 // A load Brain follows in this chat: its stage, documents, what someone is waiting for, and its history.
@@ -1940,6 +1958,63 @@ function loadCard(view, load) {
     })));
   }
   return card;
+}
+// The Brain button in the chat's header, with how many things wait for you in this chat.
+function brainButton(view) {
+  const b = iconButton("robot", "Brain", () => toggleBrainPanel(view), view.panel && !view.panel.classList.contains("closed") ? "on" : "dim");
+  const n = ((view.brain && view.brain.pinned) || []).length;
+  if (n) {
+    b.classList.add("ib-count");
+    b.title = `Brain · ${n} waiting for you`;
+    b.append(h("span", { class: "ib-badge", text: String(n) }));
+  }
+  return b;
+}
+// What waits for you in this chat (a message to approve, a question), newest first, pinned above everything else.
+function pinnedCard(view, a) {
+  const card = h("div", { class: "bpin" },
+    h("div", { class: "brun-top" }, labelPill(a.jobName || "Brain", "var(--warning)"), h("span", { text: brainTime(a.at) })));
+  if (a.why) card.append(h("div", { class: "brun-text", text: a.why }));
+  card.append(brainAction(view, a));
+  const row = h("div", { class: "bact-buttons" });
+  if (a.messageIds && a.messageIds.length) {
+    row.append(h("button", { class: "tbtn", text: a.messageIds.length > 1 ? `Go to messages (${a.messageIds.length})` : "Go to message",
+      onclick: () => { selectBrainMessage(view, a.messageIds); jumpTo(a.messageIds[0]); } }));
+  }
+  row.append(feedbackButton(view, { job: a.job, runId: a.runId, about: `The ${a.kind === "escalation" ? "question" : "suggested message"}${a.text ? `: "${String(a.text).slice(0, 200)}"` : ""}` }));
+  card.append(row);
+  return card;
+}
+// Feedback on anything Brain did: its agent writes it into the job's rules (readable on Brain's Jobs tab).
+function feedbackButton(view, ctx) {
+  const key = `${ctx.runId || ""}:${ctx.about || ""}`;
+  return h("button", { class: "tbtn dim", text: "Feedback", title: "Tell Brain what to do differently. It writes it into the job's rules.",
+    onclick: () => { view.feedback = { key, ctx, text: "" }; renderBrainPanel(view); } });
+}
+function feedbackForm(view) {
+  const f = view.feedback;
+  const area = h("textarea", { class: "bact-input", rows: 3, placeholder: "What should Brain do differently? It becomes part of the job's rules." });
+  area.value = f.text || "";
+  area.addEventListener("input", () => { f.text = area.value; });
+  const send = async () => {
+    if (!area.value.trim()) { area.focus(); return; }
+    try {
+      const r = await post("/v1/brain/feedback", { text: area.value.trim(), job: f.ctx.job || null, run_id: f.ctx.runId || null, about: f.ctx.about || null });
+      toast(r.text || "Sent");
+      view.feedback = null;
+      if (document.activeElement === area) area.blur();
+      renderBrainPanel(view);
+    } catch (e) { toast("Didn't work: " + e.message); }
+  };
+  const box = h("div", { class: "bfb" },
+    h("div", { class: "bp-sub", style: "margin-top:0", text: "Feedback" }),
+    f.ctx.about ? h("div", { class: "bact-line", style: "color:var(--text2)", text: "About: " + f.ctx.about }) : null,
+    area,
+    h("div", { class: "bact-buttons" },
+      h("button", { class: "tbtn", text: "Send feedback", onclick: send }),
+      h("button", { class: "tbtn dim", text: "Cancel", onclick: () => { view.feedback = null; renderBrainPanel(view); } })));
+  setTimeout(() => { if (view.feedback === f && document.activeElement !== area) area.focus(); }, 0);
+  return box;
 }
 function brainAction(view, action) {
   const card = h("div", { class: "bact" });

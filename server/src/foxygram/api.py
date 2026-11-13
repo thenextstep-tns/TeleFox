@@ -68,6 +68,13 @@ class BrainSendingBody(BaseModel):
     on: bool
 
 
+class BrainFeedback(BaseModel):
+    text: str
+    job: str | None = None
+    run_id: int | None = None
+    about: str | None = None
+
+
 class BrainDecision(BaseModel):
     decision: Literal["approve", "reject", "answer", "dismiss"]
     text: str | None = None
@@ -83,10 +90,20 @@ def brain_panel(chat: dict[str, Any], status: dict[str, Any], analysis: dict[str
     for item in analysis.get("items") or []:
         telegram_ids = [int(m) for m in item.get("messageIds") or []]
         items.append({**item, "telegramMessageIds": telegram_ids, "messageIds": [to_tdlib(m) for m in telegram_ids]})
+    # What waits for the owner (a message to approve, a question to answer), newest first, pinned above everything else.
+    pinned = []
+    for item in items:
+        for action in item.get("actions") or []:
+            if action.get("status") == "open":
+                why = (item.get("decisions") or [{}])[-1].get("text") or ""
+                pinned.append({**action, "job": item.get("job"), "jobName": item.get("jobName"), "at": action.get("createdAt") or item.get("at"),
+                               "why": why, "messageIds": item["messageIds"]})
+    pinned.sort(key=lambda a: (str(a.get("at") or ""), int(a.get("id") or 0)), reverse=True)
     return {
         "active": True,
         "jobs": [{"id": job, "name": names.get(job, job), "paused": job in paused} for job in chat["chat"]["jobs"]],
         "items": items,
+        "pinned": pinned,
         # Messages Brain has received but not yet started on (it waits about 20 s for more), as TDLib ids.
         "waiting": [to_tdlib(int(m)) for m in analysis.get("waiting") or []],
         # False when the owner switched sending off: Brain only shows what it would have answered.
@@ -365,6 +382,13 @@ def add_v1_routes(app: FastAPI, service: Service, dependencies: list[Any]) -> No
         status, analysis, loads = await brain(asyncio.gather(
             service.brain.status(), service.brain.analysis(chat_id, max(1, min(limit, 500))), optional(service.brain.loads(chat_id))))
         return brain_panel(chat, status, analysis, loads)
+
+    @app.post("/v1/brain/feedback", **guarded)
+    async def brain_feedback(body: BrainFeedback) -> dict[str, Any]:
+        """Feedback on something Brain did; the job's agent writes it into its rules."""
+        if not body.text.strip():
+            raise HTTPException(status_code=400, detail="Write your feedback first.")
+        return await brain(service.brain.feedback(body.text.strip(), body.job, body.run_id, body.about))
 
     @app.post("/v1/brain/actions/{action_id}/decide", **guarded)
     async def brain_decide(action_id: int, body: BrainDecision) -> dict[str, Any]:

@@ -83,6 +83,17 @@ class Brain:
         query = urllib.parse.urlencode({"show": "all", "chatId": str(chat_id)})
         return await self._call("GET", f"/brain/api/loads?{query}")
 
+    async def feedback(self, text: str, job: str | None = None, run_id: int | None = None, about: str | None = None) -> dict[str, Any]:
+        """The owner's feedback on something a job did: its agent writes it into the job's rules."""
+        body: dict[str, Any] = {"text": text}
+        if job:
+            body["job"] = job
+        if run_id is not None:
+            body["runId"] = run_id
+        if about:
+            body["about"] = about
+        return await self._call("POST", "/brain/api/feedback", body)
+
     async def status(self) -> dict[str, Any]:
         return await self._call("GET", "/brain/api/status")
 

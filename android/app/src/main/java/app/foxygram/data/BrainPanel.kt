@@ -29,9 +29,13 @@ data class BrainAction(
     val isUnsent: Boolean get() = status == "not_sent"
 }
 
+/** Something waiting for the owner in this chat (a message to approve, a question), pinned on top, with why. */
+data class BrainPinned(val action: BrainAction, val runId: Long, val job: String, val jobName: String, val at: String, val why: String, val messageIds: List<Long>)
+
 /** One agent run started by this chat's messages, with its follow-ups folded in. Message ids are TDLib's. */
 data class BrainRun(
     val runId: Long,
+    val job: String = "",
     val jobName: String,
     val at: String,
     val messageIds: List<Long>,
@@ -92,6 +96,7 @@ data class BrainPanel(
     val waiting: List<Long> = emptyList(),
     val sending: Boolean = true,
     val loads: List<BrainLoad>? = null,
+    val pinned: List<BrainPinned> = emptyList(),
 ) {
     /** The loads Brain recorded from these messages. */
     fun loadsFor(messageIds: Collection<Long>): List<BrainLoad> = loads.orEmpty().filter { it.mentions(messageIds) }
@@ -142,8 +147,28 @@ fun parseBrainPanel(body: String): BrainPanel {
         waiting = json.optJSONArray("waiting")?.let { ids -> (0 until ids.length()).map { ids.getLong(it) } } ?: emptyList(),
         sending = json.optBoolean("sending", true),
         loads = json.optJSONArray("loads")?.let { loads -> (0 until loads.length()).map { parseLoad(loads.getJSONObject(it)) } },
+        pinned = json.optJSONArray("pinned").objects().map {
+            BrainPinned(
+                action = parseAction(it), runId = it.optLong("runId"), job = it.optString("job"), jobName = it.text("jobName") ?: "Brain",
+                at = it.optString("at"), why = it.text("why").orEmpty(), messageIds = it.optJSONArray("messageIds").longs(),
+            )
+        },
     )
 }
+
+private fun parseAction(action: JSONObject) = BrainAction(
+    id = action.getLong("id"),
+    kind = action.optString("kind"),
+    actionType = action.text("actionType").orEmpty(),
+    status = action.optString("status"),
+    to = action.text("to"),
+    text = action.text("text"),
+    question = action.text("question"),
+    options = action.optJSONArray("options").strings(),
+    reason = action.text("reason"),
+    answer = action.text("answer"),
+    result = action.text("result"),
+)
 
 private fun JSONArray?.objects(): List<JSONObject> = if (this == null) emptyList() else (0 until length()).map { getJSONObject(it) }
 
@@ -186,29 +211,14 @@ private fun parseRun(run: JSONObject): BrainRun {
     val actions = run.optJSONArray("actions") ?: JSONArray()
     return BrainRun(
         runId = run.getLong("runId"),
+        job = run.optString("job"),
         jobName = run.text("jobName") ?: run.optString("job"),
         at = run.optString("at"),
         messageIds = (0 until ids.length()).map { ids.getLong(it) },
         status = run.optString("status"),
         working = run.optBoolean("working"),
         decisions = (0 until decisions.length()).mapNotNull { decisions.getJSONObject(it).text("text") },
-        actions = (0 until actions.length()).map { index ->
-            actions.getJSONObject(index).let { action ->
-                BrainAction(
-                    id = action.getLong("id"),
-                    kind = action.optString("kind"),
-                    actionType = action.text("actionType").orEmpty(),
-                    status = action.optString("status"),
-                    to = action.text("to"),
-                    text = action.text("text"),
-                    question = action.text("question"),
-                    options = action.optJSONArray("options").strings(),
-                    reason = action.text("reason"),
-                    answer = action.text("answer"),
-                    result = action.text("result"),
-                )
-            }
-        },
+        actions = (0 until actions.length()).map { index -> parseAction(actions.getJSONObject(index)) },
         summary = run.text("summary").orEmpty(),
     )
 }

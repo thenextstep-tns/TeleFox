@@ -68,6 +68,15 @@ private val WITH_LOADS = PANEL.replace("\"active\": true,", """"active": true, "
    "events": [{"text": "Moved to Done.", "by": "owner", "at": "2026-11-10 22:00:00", "stage": "Done", "runId": null, "messageIds": []}],
    "updatedAgo": "1 day ago", "closedAt": "2026-11-10 22:00:00"}],""")
 
+/** The same panel with the suggestion that waits for the owner pinned on top, as the server sends it. */
+private val WITH_PINNED = PANEL.replace("\"active\": true,", """"active": true, "pinned": [
+  {"id": 3, "runId": 6, "kind": "approval", "actionType": "telegram.send", "status": "open", "statusText": "Waiting for you",
+   "to": "Truck 325 Shinara Matthews", "text": "Good morning! Please send your weekly trip report for last week (Nov 9–15) today. Thank you!",
+   "question": null, "options": [], "reason": "Weekly trip report not received by Monday 6:00 AM.", "answer": null, "result": null,
+   "job": "job2", "jobName": "Dispatch Helper", "at": "2026-11-16 06:00:12",
+   "why": "Truck 325 Shinara Matthews hasn't sent the weekly trip report for Nov 9–15, due this morning. I suggest reminding the driver.",
+   "messageIds": []}],""")
+
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [34], qualifiers = "w390dp-h1400dp-xxhdpi")
@@ -125,6 +134,17 @@ class BrainPanelTest {
         assertTrue(panel.loadsFor(listOf(13L shl 20)).isEmpty())
     }
 
+    @Test fun readsWhatWaitsForTheOwner() {
+        assertTrue(parseBrainPanel(PANEL).pinned.isEmpty())
+        val pin = parseBrainPanel(WITH_PINNED).pinned.single()
+        assertTrue(pin.action.isOpen && !pin.action.isQuestion)
+        assertEquals("Dispatch Helper", pin.jobName)
+        assertEquals("job2", pin.job)
+        assertEquals(6L, pin.runId)
+        assertTrue(pin.why.startsWith("Truck 325"))
+        assertEquals("job2", parseBrainPanel(PANEL).items.first().job)
+    }
+
     @Test fun brainTimesAreLocal() {
         assertEquals("", brainTime("not a time"))
         assertTrue(brainTime("2026-11-10 18:31:18").endsWith("18:31"))
@@ -153,6 +173,7 @@ class BrainPanelTest {
     @Test fun sheetForAMessageDark() = shot(ThemeMode.Dark, "brain_message_dark", listOf(101L shl 20))
     @Test fun sheetForTheChatLight() = shot(ThemeMode.Light, "brain_chat_light", null)
     @Test fun sheetWithLoadsDark() = shot(ThemeMode.Dark, "brain_loads_dark", null, WITH_LOADS)
+    @Test fun sheetWithPinnedLight() = shot(ThemeMode.Light, "brain_pinned_light", null, WITH_PINNED)
     @Test fun sheetForAMessageWithItsLoadLight() = shot(ThemeMode.Light, "brain_message_load_light", listOf(101L shl 20), WITH_LOADS)
     @Test fun sheetWithSendingOff() = shot(ThemeMode.Light, "brain_sending_off", listOf(101L shl 20),
         PANEL.replace("\"active\": true,", "\"active\": true, \"sending\": false,")
