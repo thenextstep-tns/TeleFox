@@ -57,9 +57,12 @@ async def test_every_route_requires_the_token(service):
         for route in app.routes:
             for method in route.methods:
                 path = route.path.replace("{chat_id}", "1").replace("{case_id}", "1").replace("{burst_id}", "1") \
-                    .replace("{project_id}", "1").replace("{category_id}", "1")
+                    .replace("{project_id}", "1").replace("{category_id}", "1").replace("{action_id}", "1") \
+                    .replace("{key}", "main").replace("{file_id}", "1").replace("{topic}", "1")
                 response = await client.request(method, path, json={}, params={"q": "x"})
-                assert response.status_code == 401, f"{method} {path} -> {response.status_code}"
+                # The browser app's own pages and routes aren't there at all while [web] allowed_emails is empty.
+                browser = not path.startswith("/v1")
+                assert response.status_code == 401 or (browser and response.status_code == 404), f"{method} {path} -> {response.status_code}"
 
 
 async def test_wrong_token_rejected(service):

@@ -1,14 +1,14 @@
 """The API the phone calls. Every route needs the token issued at pairing.
 
-The browser client gets the same routes on the local-only control port, guarded there instead."""
+The browser client gets the same routes on the local-only control port, guarded there instead. On this public address
+it also gets them, with its own pages, once [web] allowed_emails names who may sign in with Google (webauth.py)."""
 from __future__ import annotations
 
 import asyncio
-import hmac
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from . import __version__
@@ -148,15 +148,25 @@ def _record_correction(service: Service, burst_id: int, from_case: int | None, t
 
 def create_api(service: Service) -> FastAPI:
     app = FastAPI(title="FoxyGram", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
-    expected = service.config.secrets.api_token
+    # Imported here: web.py imports this module.
+    from .web import CSP, add_web_routes
+    from .web_page import PAGE
+    from .webauth import WebAuth, add_web_signin, token_or_session
 
-    async def require_token(authorization: str = Header(default="")) -> None:
-        supplied = authorization.removeprefix("Bearer ").strip()
-        if not hmac.compare_digest(supplied.encode(), expected.encode()):
-            raise HTTPException(status_code=401, detail="invalid token")
-        service.phone_seen_at = now()
+    auth = WebAuth(service)
+    # The browser app: its sign-in and its page first, so they come before the app's own /app route.
+    add_web_signin(app, service, auth, PAGE, {
+        "Cache-Control": "no-store", "Content-Security-Policy": CSP, "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
+    })
+    # The phone's /v1 routes, which the browser app shares: the pairing token, or a signed-in browser.
+    add_v1_routes(app, service, [Depends(token_or_session(service, auth))])
 
-    add_v1_routes(app, service, [Depends(require_token)])
+    async def browser(request: Request) -> None:
+        if not auth.enabled:
+            raise HTTPException(status_code=404, detail="Not Found")
+        auth.require(request)
+
+    add_web_routes(app, service, [Depends(browser)], with_v1=False)
     return app
 
 

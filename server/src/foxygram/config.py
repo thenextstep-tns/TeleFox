@@ -59,6 +59,10 @@ url = "http://127.0.0.1:7777"
 env_file = ""
 # Or paste the token here instead.
 token = ""
+
+[web]
+# The browser app on public_url, for these Google accounts only (Brain's Firebase sign-in). Empty: phone only.
+allowed_emails = []
 """
 
 
@@ -125,6 +129,13 @@ class BrainConfig:
 
 
 @dataclass(frozen=True)
+class WebConfig:
+    """The browser app on the public address: who may sign in there with Google. Nobody, by default."""
+
+    allowed_emails: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Secrets:
     """Generated once; handed to the phone only through the pairing code."""
 
@@ -142,6 +153,7 @@ class Config:
     bursts: BurstConfig = field(default_factory=BurstConfig)
     cases: CaseConfig = field(default_factory=CaseConfig)
     brain: BrainConfig = field(default_factory=BrainConfig)
+    web: WebConfig = field(default_factory=WebConfig)
 
     @property
     def db_path(self) -> Path:
@@ -225,4 +237,6 @@ def load_config(home: Path | None = None, env_file: Path | None = None) -> Confi
         bursts=BurstConfig(**data.get("bursts", {})),
         cases=CaseConfig(**data.get("cases", {})),
         brain=BrainConfig(**data.get("brain", {})),
+        web=WebConfig(allowed_emails=tuple(
+            str(e).strip().lower() for e in data.get("web", {}).get("allowed_emails", []) if str(e).strip())),
     )

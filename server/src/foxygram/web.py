@@ -95,14 +95,17 @@ def list_key_param(value: str) -> str:
     return value
 
 
-def add_web_routes(app: FastAPI, service: Service) -> None:
+def add_web_routes(app: FastAPI, service: Service, guard: list[Any] | None = None, with_v1: bool = True) -> None:
+    """The browser app's routes. On the control port they are guarded by the page's same-origin check; on the public
+    address by a signed-in browser (webauth), where the /v1 routes already exist for the phone and are not added again."""
     session = service.session
     store = session.store
-    guard = [Depends(same_origin)]
+    guard = guard or [Depends(same_origin)]
     opened: set[int] = set()
 
     # Cases, labels, review and the Claude chat list, exactly as the phone gets them, minus the phone's token.
-    add_v1_routes(app, service, guard)
+    if with_v1:
+        add_v1_routes(app, service, guard)
 
     def ready() -> None:
         if session.auth.state != "ready":

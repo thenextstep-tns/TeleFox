@@ -106,6 +106,14 @@ class Brain:
             body["reason"] = reason
         return await self._call("POST", "/brain/api/decide", body)
 
+    async def firebase(self) -> dict[str, Any]:
+        """Brain's Firebase web config (public by design), for the browser app's Google sign-in page."""
+        return await self._call("GET", "/firebase")
+
+    async def verify_firebase(self, id_token: str) -> dict[str, Any]:
+        """Brain checks Firebase's signed answer and says whose it is: email, emailVerified."""
+        return await self._call("POST", "/firebase/verify", {"idToken": id_token})
+
     async def _call(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         token = self.token()
         if not token:
